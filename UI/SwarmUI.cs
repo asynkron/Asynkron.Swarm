@@ -144,18 +144,30 @@ public class SwarmUI : IDisposable
         // Start input handling task
         var inputTask = Task.Run(() => HandleInputAsync(token), token);
 
-        // Main render loop
-        await AnsiConsole.Live(BuildLayout())
-            .AutoClear(false)
-            .Overflow(VerticalOverflow.Ellipsis)
-            .StartAsync(async ctx =>
-            {
-                while (!token.IsCancellationRequested)
+        try
+        {
+            // Clear and show initial render
+            AnsiConsole.Clear();
+            AnsiConsole.Write(BuildLayout());
+
+            // Main render loop
+            await AnsiConsole.Live(BuildLayout())
+                .AutoClear(true)
+                .Overflow(VerticalOverflow.Ellipsis)
+                .StartAsync(async ctx =>
                 {
-                    ctx.UpdateTarget(BuildLayout());
-                    await Task.Delay(RefreshMs, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-                }
-            });
+                    while (!token.IsCancellationRequested)
+                    {
+                        ctx.UpdateTarget(BuildLayout());
+                        ctx.Refresh();
+                        await Task.Delay(RefreshMs, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                    }
+                });
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.WriteException(ex);
+        }
 
         await inputTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
@@ -206,16 +218,20 @@ public class SwarmUI : IDisposable
         var layout = new Layout("Root")
             .SplitRows(
                 new Layout("Header").Size(3),
-                new Layout("Main").SplitColumns(
-                    new Layout("Left").Size(40).SplitRows(
-                        new Layout("Agents"),
-                        new Layout("Status").Size(12)),
-                    new Layout("Log")));
+                new Layout("Main"));
+
+        var main = layout["Main"].SplitColumns(
+            new Layout("Left").Size(40),
+            new Layout("Log"));
+
+        main["Left"].SplitRows(
+            new Layout("Agents"),
+            new Layout("Status").Size(14));
 
         layout["Header"].Update(BuildHeader());
-        layout["Agents"].Update(BuildAgentList());
-        layout["Status"].Update(BuildStatusPanel());
-        layout["Log"].Update(BuildLogPanel());
+        main["Agents"].Update(BuildAgentList());
+        main["Status"].Update(BuildStatusPanel());
+        main["Log"].Update(BuildLogPanel());
 
         return layout;
     }
@@ -293,7 +309,7 @@ public class SwarmUI : IDisposable
 
         if (table.Rows.Count == 0)
         {
-            table.AddRow("[grey]", "[grey]No agents running[/]");
+            table.AddRow(" ", "[grey]No agents running[/]");
         }
 
         return new Panel(table)
@@ -390,14 +406,28 @@ public class SwarmUI : IDisposable
                 cache.Lines.RemoveAt(0);
             }
 
-            cache.CachedContent = cache.Lines.Count > 0
-                ? string.Join(Environment.NewLine, cache.Lines)
+            // Escape markup characters and strip ANSI codes
+            var cleanLines = cache.Lines.Select(StripAnsiAndEscape).ToList();
+            cache.CachedContent = cleanLines.Count > 0
+                ? string.Join(Environment.NewLine, cleanLines)
                 : "[Empty log file]";
         }
         catch (Exception ex)
         {
             cache.CachedContent = $"[Error reading log: {ex.Message}]";
         }
+    }
+
+    private static string StripAnsiAndEscape(string input)
+    {
+        // Strip ANSI escape codes
+        var stripped = System.Text.RegularExpressions.Regex.Replace(
+            input,
+            @"\x1B\[[0-9;]*[A-Za-z]",
+            "");
+
+        // Escape Spectre markup characters
+        return Markup.Escape(stripped);
     }
 
     public void Stop()
