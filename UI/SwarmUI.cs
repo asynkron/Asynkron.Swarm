@@ -1,4 +1,5 @@
 using System.Globalization;
+using Asynkron.Swarm.IO;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.Services;
 using Spectre.Console;
@@ -15,8 +16,8 @@ public sealed class SwarmUI : IDisposable
     private string? _selectedAgentId;
     private readonly List<string> _agentIds = [];
 
-    // Cache log content per agent
-    private readonly Dictionary<string, LogCache> _logCaches = new();
+    // Async file tailers per agent
+    private readonly Dictionary<string, AsyncFileTailer> _tailers = new();
 
     // Status messages
     private readonly List<string> _statusMessages = [];
@@ -25,7 +26,7 @@ public sealed class SwarmUI : IDisposable
     private int _totalRounds;
     private TimeSpan _remainingTime;
 
-    private const int LogTailLines = 50;
+
     private const int RefreshMs = 20;
     private const int MaxStatusMessages = 10;
 
@@ -44,22 +45,6 @@ public sealed class SwarmUI : IDisposable
     private bool _agentsDirty = true;
     private bool _logDirty = true;
 
-    private sealed class LogCache : IDisposable
-    {
-        public List<string> Lines { get; } = new(LogTailLines + 10);
-        public string CachedContent { get; set; } = "";
-        public int TotalLineCount { get; set; }
-        public FileStream? Stream { get; set; }
-        public StreamReader? Reader { get; set; }
-        public bool IsReading { get; set; }
-
-        public void Dispose()
-        {
-            Reader?.Dispose();
-            Stream?.Dispose();
-        }
-    }
-
     public SwarmUI(AgentRegistry registry)
     {
         _registry = registry;
@@ -68,7 +53,9 @@ public sealed class SwarmUI : IDisposable
         foreach (var agent in _registry.GetAll())
         {
             _agentIds.Add(agent.Id);
-            _logCaches[agent.Id] = new LogCache();
+            var tailer = new AsyncFileTailer(agent.LogPath);
+            tailer.Start();
+            _tailers[agent.Id] = tailer;
         }
 
         if (_agentIds.Count > 0)
@@ -101,7 +88,9 @@ public sealed class SwarmUI : IDisposable
         lock (_lock)
         {
             _agentIds.Add(agent.Id);
-            _logCaches[agent.Id] = new LogCache();
+            var tailer = new AsyncFileTailer(agent.LogPath);
+            tailer.Start();
+            _tailers[agent.Id] = tailer;
             _agentsDirty = true;
 
             if (_selectedAgentId == null)
@@ -121,10 +110,10 @@ public sealed class SwarmUI : IDisposable
             if (index < 0) return;
             _agentIds.RemoveAt(index);
 
-            if (_logCaches.TryGetValue(agent.Id, out var cache))
+            if (_tailers.TryGetValue(agent.Id, out var tailer))
             {
-                cache.Dispose();
-                _logCaches.Remove(agent.Id);
+                tailer.Dispose();
+                _tailers.Remove(agent.Id);
             }
 
             _agentsDirty = true;
@@ -326,29 +315,9 @@ public sealed class SwarmUI : IDisposable
 
     private bool CheckLogChanged()
     {
-        if (_selectedAgentId == null) return false;
-        var cache = _logCaches.GetValueOrDefault(_selectedAgentId);
-        if (cache == null) return false;
-
-        var agent = _registry.Get(_selectedAgentId);
-        if (agent == null) return false;
-
-        try
-        {
-            if (cache.Stream == null)
-            {
-                // Stream not open yet - check if file exists
-                return File.Exists(agent.LogPath);
-            }
-
-            // Check if there's more data to read
-            var fileInfo = new FileInfo(agent.LogPath);
-            return cache.Stream.Position < fileInfo.Length;
-        }
-        catch
-        {
-            return false;
-        }
+        // The tailer reads in background, so we always check for updates
+        // A more sophisticated approach would track last-seen line count
+        return _selectedAgentId != null && _tailers.ContainsKey(_selectedAgentId);
     }
 
     private Panel BuildHeader()
@@ -435,75 +404,18 @@ public sealed class SwarmUI : IDisposable
                 .Expand();
         }
 
-        var cache = _logCaches.GetValueOrDefault(_selectedAgentId) ?? new LogCache();
-        UpdateLogCache(agent.LogPath, cache);
+        var tailer = _tailers.GetValueOrDefault(_selectedAgentId);
+        var content = tailer?.Tail() ?? "[Waiting for log file...]";
+        var lineCount = tailer?.TotalLineCount ?? 0;
 
         var statusText = agent.IsRunning ? "[green]Running[/]" : "[red]Stopped[/]";
         var timeStamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-        var headerText = $"[bold]{agent.Name}[/] - {statusText} - [grey]{agent.Runtime}[/] - [grey]{timeStamp} ({cache.TotalLineCount} lines)[/]";
+        var headerText = $"[bold]{agent.Name}[/] - {statusText} - [grey]{agent.Runtime}[/] - [grey]{timeStamp} ({lineCount} lines)[/]";
 
-        return new Panel(new Text(cache.CachedContent))
+        return new Panel(new Text(content))
             .Header(headerText)
             .BorderColor(agent.IsRunning ? Color.Green : Color.Red)
             .Expand();
-    }
-
-    private static void UpdateLogCache(string logPath, LogCache cache)
-    {
-        try
-        {
-            // Open stream if not already open
-            if (cache.Stream == null)
-            {
-                if (!File.Exists(logPath))
-                {
-                    cache.CachedContent = "[Waiting for log file...]";
-                    return;
-                }
-
-                cache.Stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                cache.Reader = new StreamReader(cache.Stream);
-            }
-
-            // Read any new lines available
-            var hasNewLines = false;
-            while (cache.Reader!.ReadLine() is { } line)
-            {
-                cache.Lines.Add(line);
-                cache.TotalLineCount++;
-                hasNewLines = true;
-            }
-
-            if (!hasNewLines && cache.Lines.Count > 0)
-            {
-                return; // No new content, keep cached
-            }
-
-            // Keep only last N lines
-            while (cache.Lines.Count > LogTailLines)
-            {
-                cache.Lines.RemoveAt(0);
-            }
-
-            // Strip ANSI codes (Text class handles display without markup interpretation)
-            var cleanLines = cache.Lines.Select(StripAnsiCodes).ToList();
-            cache.CachedContent = cleanLines.Count > 0
-                ? string.Join(Environment.NewLine, cleanLines)
-                : "[Empty log file]";
-        }
-        catch (Exception ex)
-        {
-            cache.CachedContent = $"[Error reading log: {ex.Message}]";
-        }
-    }
-
-    private static string StripAnsiCodes(string input)
-    {
-        // Strip ANSI escape codes (colors, cursor movement, etc.)
-        return System.Text.RegularExpressions.Regex.Replace(
-            input,
-            @"\x1B\[[0-9;]*[A-Za-z]",
-            "");
     }
 
     public void Stop()
@@ -517,10 +429,10 @@ public sealed class SwarmUI : IDisposable
         _registry.AgentRemoved -= OnAgentRemoved;
         _registry.AgentStopped -= OnAgentStopped;
 
-        // Dispose all log caches (closes streams)
-        foreach (var cache in _logCaches.Values)
+        // Dispose all tailers (stops background tasks, closes streams)
+        foreach (var tailer in _tailers.Values)
         {
-            cache.Dispose();
+            tailer.Dispose();
         }
 
         _cts.Dispose();
