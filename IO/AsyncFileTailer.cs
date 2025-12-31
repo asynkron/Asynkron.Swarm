@@ -7,6 +7,7 @@ public sealed partial class AsyncFileTailer : IDisposable
 {
     private readonly string _path;
     private readonly int _maxLines;
+    private readonly bool _codexColoring;
     private readonly List<string> _lines = [];
     private readonly Lock _lock = new();
 
@@ -18,12 +19,17 @@ public sealed partial class AsyncFileTailer : IDisposable
     private string _cachedContent = "";
     private bool _contentDirty = true;
 
+    // State tracking for Codex output coloring
+    private enum OutputState { Normal, Thinking, Exec }
+    private OutputState _currentState = OutputState.Normal;
+
     public int TotalLineCount => _totalLineCount;
 
-    public AsyncFileTailer(string path, int maxLines = 50)
+    public AsyncFileTailer(string path, int maxLines = 50, bool codexColoring = false)
     {
         _path = path;
         _maxLines = maxLines;
+        _codexColoring = codexColoring;
     }
 
     public void Start()
@@ -53,11 +59,10 @@ public sealed partial class AsyncFileTailer : IDisposable
 
             if (line != null)
             {
-                // Clean the line immediately when read
-                var cleanedLine = CleanLine(line);
-
                 lock (_lock)
                 {
+                    // Clean the line, optionally apply Codex coloring
+                    var cleanedLine = _codexColoring ? CleanAndColorLine(line) : CleanLine(line);
                     _lines.Add(cleanedLine);
                     _totalLineCount++;
                     _contentDirty = true;
@@ -122,6 +127,56 @@ public sealed partial class AsyncFileTailer : IDisposable
         }
 
         return sb.ToString();
+    }
+
+    private string CleanAndColorLine(string input)
+    {
+        // Strip ANSI escape codes
+        var stripped = AnsiRegex().Replace(input, "");
+
+        // Remove non-printable characters, replace tabs with spaces
+        var sb = new StringBuilder(stripped.Length);
+        foreach (var c in stripped)
+        {
+            if (c == '\t')
+            {
+                sb.Append("    "); // 4 spaces
+            }
+            else if (c >= 32)
+            {
+                // Escape Spectre markup characters
+                if (c == '[') sb.Append("[[");
+                else if (c == ']') sb.Append("]]");
+                else sb.Append(c);
+            }
+        }
+
+        var cleaned = sb.ToString();
+        var trimmed = cleaned.TrimStart();
+
+        // Detect state transitions
+        if (trimmed == "thinking")
+        {
+            _currentState = OutputState.Thinking;
+            return "[dim]thinking[/]";
+        }
+        if (trimmed == "exec")
+        {
+            _currentState = OutputState.Exec;
+            return "[grey]exec[/]";
+        }
+        if (trimmed.StartsWith("codex") || trimmed.StartsWith("claude"))
+        {
+            _currentState = OutputState.Normal;
+        }
+
+        // Apply color based on current state
+        return _currentState switch
+        {
+            OutputState.Thinking => $"[dim]{cleaned}[/]",
+            OutputState.Exec => $"[grey]{cleaned}[/]",
+            _ => cleaned
+        };
     }
 
     [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]")]

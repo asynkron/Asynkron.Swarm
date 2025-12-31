@@ -3,6 +3,7 @@ using Asynkron.Swarm.IO;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.Services;
 using Spectre.Console;
+using Spectre.Console.Rendering;
 
 namespace Asynkron.Swarm.UI;
 
@@ -53,7 +54,8 @@ public sealed class SwarmUI : IDisposable
         foreach (var agent in _registry.GetAll())
         {
             _agentIds.Add(agent.Id);
-            var tailer = new AsyncFileTailer(agent.LogPath);
+            var useCodexColoring = agent.Runtime == AgentRuntime.Codex;
+            var tailer = new AsyncFileTailer(agent.LogPath, codexColoring: useCodexColoring);
             tailer.Start();
             _tailers[agent.Id] = tailer;
         }
@@ -88,7 +90,8 @@ public sealed class SwarmUI : IDisposable
         lock (_lock)
         {
             _agentIds.Add(agent.Id);
-            var tailer = new AsyncFileTailer(agent.LogPath);
+            var useCodexColoring = agent.Runtime == AgentRuntime.Codex;
+            var tailer = new AsyncFileTailer(agent.LogPath, codexColoring: useCodexColoring);
             tailer.Start();
             _tailers[agent.Id] = tailer;
             _agentsDirty = true;
@@ -412,7 +415,12 @@ public sealed class SwarmUI : IDisposable
         var timeStamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         var headerText = $"[bold]{agent.Name}[/] - {statusText} - [grey]{agent.Runtime}[/] - [grey]{timeStamp} ({lineCount} lines)[/]";
 
-        return new Panel(new Text(content))
+        // Use Markup for Codex (has color tags), Text for others
+        IRenderable logContent = agent.Runtime == AgentRuntime.Codex
+            ? new Markup(content)
+            : new Text(content);
+
+        return new Panel(logContent)
             .Header(headerText)
             .BorderColor(agent.IsRunning ? Color.Green : Color.Red)
             .Expand();
