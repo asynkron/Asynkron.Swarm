@@ -44,13 +44,20 @@ public sealed class SwarmUI : IDisposable
     private bool _agentsDirty = true;
     private bool _logDirty = true;
 
-    private sealed class LogCache
+    private sealed class LogCache : IDisposable
     {
-        public long LastPosition { get; set; }
-        public long LastSize { get; set; }
         public List<string> Lines { get; } = new(LogTailLines + 10);
         public string CachedContent { get; set; } = "";
         public int TotalLineCount { get; set; }
+        public FileStream? Stream { get; set; }
+        public StreamReader? Reader { get; set; }
+        public bool IsReading { get; set; }
+
+        public void Dispose()
+        {
+            Reader?.Dispose();
+            Stream?.Dispose();
+        }
     }
 
     public SwarmUI(AgentRegistry registry)
@@ -113,7 +120,13 @@ public sealed class SwarmUI : IDisposable
             var index = _agentIds.IndexOf(agent.Id);
             if (index < 0) return;
             _agentIds.RemoveAt(index);
-            _logCaches.Remove(agent.Id);
+
+            if (_logCaches.TryGetValue(agent.Id, out var cache))
+            {
+                cache.Dispose();
+                _logCaches.Remove(agent.Id);
+            }
+
             _agentsDirty = true;
 
             if (_selectedAgentId != agent.Id) return;
@@ -322,9 +335,15 @@ public sealed class SwarmUI : IDisposable
 
         try
         {
-            if (!File.Exists(agent.LogPath)) return false;
+            if (cache.Stream == null)
+            {
+                // Stream not open yet - check if file exists
+                return File.Exists(agent.LogPath);
+            }
+
+            // Check if there's more data to read
             var fileInfo = new FileInfo(agent.LogPath);
-            return fileInfo.Length != cache.LastSize;
+            return cache.Stream.Position < fileInfo.Length;
         }
         catch
         {
@@ -433,45 +452,32 @@ public sealed class SwarmUI : IDisposable
     {
         try
         {
-            if (!File.Exists(logPath))
+            // Open stream if not already open
+            if (cache.Stream == null)
             {
-                cache.CachedContent = "[Waiting for log file...]";
-                return;
+                if (!File.Exists(logPath))
+                {
+                    cache.CachedContent = "[Waiting for log file...]";
+                    return;
+                }
+
+                cache.Stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                cache.Reader = new StreamReader(cache.Stream);
             }
 
-            var fileInfo = new FileInfo(logPath);
-
-            // Only re-read if file has changed
-            if (fileInfo.Length == cache.LastSize)
-            {
-                return; // No changes, use cached content
-            }
-
-            // File grew - read new content
-            using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-            if (fileInfo.Length > cache.LastSize && cache.LastPosition > 0)
-            {
-                // Incremental read - seek to last position
-                fs.Seek(cache.LastPosition, SeekOrigin.Begin);
-            }
-
-            using var reader = new StreamReader(fs);
-
-            if (cache.LastPosition == 0)
-            {
-                // First read - read all
-                cache.Lines.Clear();
-            }
-
-            while (reader.ReadLine() is { } line)
+            // Read any new lines available
+            var hasNewLines = false;
+            while (cache.Reader!.ReadLine() is { } line)
             {
                 cache.Lines.Add(line);
                 cache.TotalLineCount++;
+                hasNewLines = true;
             }
 
-            cache.LastPosition = fs.Position;
-            cache.LastSize = fileInfo.Length;
+            if (!hasNewLines && cache.Lines.Count > 0)
+            {
+                return; // No new content, keep cached
+            }
 
             // Keep only last N lines
             while (cache.Lines.Count > LogTailLines)
@@ -510,6 +516,13 @@ public sealed class SwarmUI : IDisposable
         _registry.AgentAdded -= OnAgentAdded;
         _registry.AgentRemoved -= OnAgentRemoved;
         _registry.AgentStopped -= OnAgentStopped;
+
+        // Dispose all log caches (closes streams)
+        foreach (var cache in _logCaches.Values)
+        {
+            cache.Dispose();
+        }
+
         _cts.Dispose();
     }
 }
