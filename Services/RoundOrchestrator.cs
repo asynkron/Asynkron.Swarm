@@ -123,13 +123,6 @@ public class RoundOrchestrator
 
         try
         {
-            // Create shared communication file
-            var swarmDir = Path.Combine(repoPath, ".swarm");
-            Directory.CreateDirectory(swarmDir);
-            var sharedFilePath = Path.Combine(swarmDir, "autopilot-shared.md");
-            await File.WriteAllTextAsync(sharedFilePath, "# Shared Agent Communication - Autopilot\n\nAgents should document all their key findings below.\n\n---\n\n", token);
-            _ui.AddStatus($"Shared file: {sharedFilePath}");
-
             // Generate timestamp for unique branch names
             var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
 
@@ -145,7 +138,6 @@ public class RoundOrchestrator
                     i + 1,
                     worktreePaths[i],
                     options.Todo,
-                    sharedFilePath,
                     agentType,
                     autopilot: true,
                     branchName: branchName);
@@ -237,14 +229,7 @@ public class RoundOrchestrator
 
         try
         {
-            // Step 2: Create shared communication file for this round
-            var swarmDir = Path.Combine(repoPath, ".swarm");
-            Directory.CreateDirectory(swarmDir);
-            var sharedFilePath = Path.Combine(swarmDir, $"round{round}-shared.md");
-            await File.WriteAllTextAsync(sharedFilePath, $"# Shared Agent Communication - Round {round}\n\nAgents should document all their key findings below.\n\n---\n\n", token);
-            _ui.AddStatus($"Shared file: {sharedFilePath}");
-
-            // Step 4: Start worker agents (Claude, Codex, Copilot, Gemini)
+            // Start worker agents (Claude, Codex, Copilot, Gemini)
             _ui.SetPhase("Starting workers...");
             var workers = new List<WorkerAgent>();
             for (var i = 0; i < worktreePaths.Count; i++)
@@ -255,7 +240,6 @@ public class RoundOrchestrator
                     i + 1,
                     worktreePaths[i],
                     options.Todo,
-                    sharedFilePath,
                     agentType);
                 worker.Start();
                 workers.Add(worker);

@@ -39,12 +39,57 @@ public sealed class SupervisorAgent(
 
     protected override void HandleMessage(AgentMessage message)
     {
-        // Supervisor only buffers Say messages (reasoning/output)
-        // Ignores Do (tool calls) and See (tool results) for cleaner logs
         if (message.Kind == AgentMessageKind.Say)
         {
             AddMessage(message);
         }
+        else if (message.Kind == AgentMessageKind.Do)
+        {
+            // Parse tool calls to show meaningful activity
+            var summary = GetToolActivitySummary(message);
+            if (summary != null)
+            {
+                AddMessage(new AgentMessage(AgentMessageKind.Do, summary));
+            }
+        }
+    }
+
+    private string? GetToolActivitySummary(AgentMessage message)
+    {
+        var content = message.Content;
+        var toolInput = message.ToolInput ?? "";
+
+        // Check if accessing a worker's log file
+        for (var i = 0; i < WorkerLogPaths.Count; i++)
+        {
+            if (content.Contains(WorkerLogPaths[i]) || toolInput.Contains(WorkerLogPaths[i]))
+            {
+                return $"Reading logs for Worker {i + 1}";
+            }
+        }
+
+        // Check if accessing a worker's worktree
+        for (var i = 0; i < WorktreePaths.Count; i++)
+        {
+            if (content.Contains(WorktreePaths[i]) || toolInput.Contains(WorktreePaths[i]))
+            {
+                var action = message.ToolName switch
+                {
+                    "Bash" when content.Contains("git status") => "Checking git status",
+                    "Bash" when content.Contains("git diff") => "Checking git diff",
+                    "Bash" when content.Contains("git log") => "Checking git log",
+                    "Bash" when content.Contains("git cherry-pick") => "Cherry-picking commits",
+                    "Bash" when content.Contains("git merge") => "Merging changes",
+                    "Read" => "Reading file",
+                    "Glob" => "Searching files",
+                    "Grep" => "Searching code",
+                    _ => "Inspecting"
+                };
+                return $"{action} for Worker {i + 1}";
+            }
+        }
+
+        return null;
     }
 
     private string? GetModel()

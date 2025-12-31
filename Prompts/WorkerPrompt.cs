@@ -2,7 +2,7 @@ namespace Asynkron.Swarm.Prompts;
 
 public static class WorkerPrompt
 {
-    public static string Build(string todoFile, string agentName, string sharedFilePath, int restartCount = 0, bool autopilot = false, string? branchName = null, string? logPath = null)
+    public static string Build(string todoFile, string agentName, int restartCount = 0, bool autopilot = false, string? branchName = null, string? logPath = null)
     {
         var basePrompt = $"run `cat {todoFile}` to read the todo file (use cat/tail, not Read tool - files can be large), then follow the instructions";
 
@@ -10,32 +10,30 @@ public static class WorkerPrompt
 
             ## Inter-Agent Communication
 
-            You are part of a multi-agent swarm. To collaborate with other agents, use the shared file for
-            EVERY key-finding, such as bugs, why something works or does´t work, how to fix something, passing tests,
-             file: **{sharedFilePath}**
+            You are part of a multi-agent swarm. To collaborate with other agents, use the `tell` command.
+            This is a new command that broadcasts messages to all other agents in the swarm.
 
-            ### Writing to the shared file
-            Document any useful findings, test results, or valuable information by APPENDING to this file.
-            Always prefix your entries with your agent name. Format:
-
+            ### Using the tell command
+            Document ALL relevant findings by using:
             ```
-            {agentName} says:
-            <your finding or information here>
-
+            tell "{agentName}: <your message here>"
             ```
 
-            Examples of what to document:
-            - Important discoveries about the codebase
+            Examples:
+            - `tell "{agentName}: I found a bug in CopycatProxy.cs at lines 2013-2015"`
+            - `tell "{agentName}: Tests now pass after fixing the null check in UserService"`
+            - `tell "{agentName}: The API endpoint requires authentication - add Bearer token"`
+            - `tell "{agentName}: Build fails due to missing dependency - run dotnet restore"`
+
+            What to communicate:
+            - Bug locations and descriptions
+            - Why something works or doesn't work
+            - How to fix specific issues
             - Test results (e.g., "8 out of 10 tests pass")
-            - Errors encountered and their solutions
-            - Insights that might help other agents
             - Warnings about pitfalls or gotchas
+            - Any insight that might help other agents
 
-            ### Reading from the shared file
-            Periodically read this file to see if other agents have added context that might help you.
-            Check for findings from other agents that could inform your work.
-
-            IMPORTANT: When writing, always APPEND to the file - never overwrite existing content.
+            IMPORTANT: Use `tell` frequently to share your findings with the swarm.
             """;
 
         var autopilotInstructions = autopilot && branchName != null ? $"""

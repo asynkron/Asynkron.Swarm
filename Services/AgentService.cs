@@ -35,7 +35,6 @@ public class AgentService
         int agentNumber,
         string worktreePath,
         string todoFile,
-        string sharedFilePath,
         AgentType agentType,
         bool autopilot = false,
         string? branchName = null)
@@ -46,7 +45,6 @@ public class AgentService
             agentNumber,
             worktreePath,
             todoFile,
-            sharedFilePath,
             cli,
             _logDir,
             restartCount: 0,

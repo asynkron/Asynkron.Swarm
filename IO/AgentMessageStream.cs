@@ -47,23 +47,56 @@ public sealed partial class AgentMessageStream : IDisposable
         }
 
         _stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+        // Seek to near end to avoid processing entire history
+        // Keep last ~64KB for context
+        const long tailBytes = 64 * 1024;
+        if (_stream.Length > tailBytes)
+        {
+            _stream.Seek(-tailBytes, SeekOrigin.End);
+            // Skip partial first line (we likely landed mid-line)
+            var buffer = new byte[4096];
+            var bytesRead = _stream.Read(buffer, 0, buffer.Length);
+            var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            var newlinePos = text.IndexOf('\n');
+            if (newlinePos >= 0)
+            {
+                // Position just after the first newline we find
+                _stream.Seek(-tailBytes + newlinePos + 1, SeekOrigin.End);
+            }
+        }
+
         _reader = new StreamReader(_stream);
 
         while (!ct.IsCancellationRequested)
         {
-            var line = await _reader.ReadLineAsync(ct).ConfigureAwait(false);
-
-            if (line != null)
+            try
             {
-                var cleaned = CleanLine(line);
-                if (!string.IsNullOrEmpty(cleaned))
+                var line = await _reader.ReadLineAsync(ct).ConfigureAwait(false);
+
+                if (line != null)
                 {
-                    OnLine?.Invoke(cleaned);
+                    var cleaned = CleanLine(line);
+                    if (!string.IsNullOrEmpty(cleaned))
+                    {
+                        OnLine?.Invoke(cleaned);
+                    }
+                }
+                else
+                {
+                    // Discard buffered data so we can see newly appended content
+                    _reader.DiscardBufferedData();
+                    await Task.Delay(50, ct).ConfigureAwait(false);
                 }
             }
-            else
+            catch (OperationCanceledException)
             {
-                await Task.Delay(50, ct).ConfigureAwait(false);
+                break;
+            }
+            catch
+            {
+                // On any error, wait and retry
+                await Task.Delay(100, ct).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
         }
     }

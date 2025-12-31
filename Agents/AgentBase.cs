@@ -55,6 +55,9 @@ public abstract class AgentBase : IDisposable
     protected abstract void HandleMessage(AgentMessage message);
     protected abstract Process SpawnProcess();
 
+    // Override in subclass to prevent restart on clean exit (e.g., workers)
+    protected virtual bool RestartOnCleanExit => true;
+
     protected AgentBase(string id, string name, AgentCliBase cli, string logPath, int round, int restartCount = 0)
     {
         Id = id;
@@ -82,43 +85,8 @@ public abstract class AgentBase : IDisposable
 
     public void Stop()
     {
-        // Unsubscribe CLI from stream
-        Cli.Unsubscribe();
-
-        if (MessageStream != null)
-        {
-            MessageStream.Dispose();
-            MessageStream = null;
-        }
-
-        if (Process != null)
-        {
-            try
-            {
-                if (!Process.HasExited)
-                {
-                    Process.Kill(entireProcessTree: true);
-                }
-
-                // Wait for process and async output handlers to complete
-                Process.WaitForExit(2000);
-                // Second call ensures async output handlers are flushed
-                if (Process.HasExited)
-                {
-                    Process.WaitForExit();
-                }
-
-                LogProcessExit(Process);
-            }
-            catch (InvalidOperationException)
-            {
-                // Process already exited or disposed
-            }
-        }
-
-        Process?.Dispose();
-        Process = null;
-
+        // Keep MessageStream alive so UI can still read/scroll the log
+        KillProcess();
         OnStopped?.Invoke(this);
     }
 
@@ -139,11 +107,17 @@ public abstract class AgentBase : IDisposable
 
     public bool Tick()
     {
-        // Restart if process has exited/crashed
+        // Check if process has exited
         if (Process is { HasExited: true })
         {
-            Restart();
-            return true;
+            var exitCode = Process.ExitCode;
+
+            // Only restart if crashed (non-zero exit) or if RestartOnCleanExit is true
+            if (exitCode != 0 || RestartOnCleanExit)
+            {
+                Restart();
+                return true;
+            }
         }
 
         return false;
@@ -164,10 +138,40 @@ public abstract class AgentBase : IDisposable
             // Ignore write errors
         }
 
-        Stop();
-        Start();
+        // Kill old process but keep the stream - it's still reading the same log file
+        KillProcess();
+
+        // Spawn new process (stream continues reading)
+        Process = SpawnProcess();
+        StartedAt = DateTimeOffset.Now;
 
         OnRestarted?.Invoke(this);
+    }
+
+    private void KillProcess()
+    {
+        if (Process == null) return;
+
+        try
+        {
+            if (!Process.HasExited)
+            {
+                Process.Kill(entireProcessTree: true);
+            }
+            Process.WaitForExit(2000);
+            if (Process.HasExited)
+            {
+                Process.WaitForExit();
+            }
+            LogProcessExit(Process);
+        }
+        catch (InvalidOperationException)
+        {
+            // Process already exited
+        }
+
+        Process.Dispose();
+        Process = null;
     }
 
     private void OnMessageReceived(AgentMessage msg)
@@ -182,7 +186,12 @@ public abstract class AgentBase : IDisposable
     public void Dispose()
     {
         Cli.OnMessage -= OnMessageReceived;
-        Stop();
+        Cli.Unsubscribe();
+
+        MessageStream?.Dispose();
+        MessageStream = null;
+
+        KillProcess();
         GC.SuppressFinalize(this);
     }
 

@@ -10,7 +10,6 @@ public sealed class WorkerAgent(
     int agentNumber,
     string worktreePath,
     string todoFile,
-    string sharedFilePath,
     AgentCliBase cli,
     string logDir,
     int restartCount = 0,
@@ -26,13 +25,15 @@ public sealed class WorkerAgent(
     public int AgentNumber { get; } = agentNumber;
     public string WorktreePath { get; } = worktreePath;
     public string TodoFile { get; } = todoFile;
-    public string SharedFilePath { get; } = sharedFilePath;
     public bool Autopilot { get; } = autopilot;
     public string? BranchName { get; } = branchName;
 
+    // Workers should not restart on clean exit (exit code 0)
+    protected override bool RestartOnCleanExit => false;
+
     protected override Process SpawnProcess()
     {
-        var prompt = WorkerPrompt.Build(TodoFile, Name, SharedFilePath, RestartCount, Autopilot, BranchName, LogPath);
+        var prompt = WorkerPrompt.Build(TodoFile, Name, RestartCount, Autopilot, BranchName, LogPath);
         var arguments = Cli.BuildArguments(prompt, GetModel());
         var stdinContent = Cli.UseStdin ? prompt : null;
 

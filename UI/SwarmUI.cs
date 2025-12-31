@@ -36,7 +36,7 @@ public sealed class SwarmUI : IDisposable
     private int _totalRounds;
     private TimeSpan _remainingTime;
 
-    private const int RefreshMs = 20;
+    private const int RefreshMs = 10;
     private const int MaxStatusMessages = 10;
     private const int LogDisplayLines = 50;
 
@@ -98,20 +98,26 @@ public sealed class SwarmUI : IDisposable
         var displayState = new AgentDisplayState();
         _displayStates[agent.Id] = displayState;
 
-        // Subscribe to agent's OnBufferedMessage - only messages the agent considers relevant
+        // Subscribe to ALL messages for spinner updates (shows agent is active)
+        agent.OnMessage += _ =>
+        {
+            lock (_lock)
+            {
+                displayState.SpinnerFrame = (displayState.SpinnerFrame + 1) % SpinnerFrames.Length;
+                _agentsDirty = true;
+            }
+        };
+
+        // Subscribe to buffered messages for display content
         agent.OnBufferedMessage += msg =>
         {
             lock (_lock)
             {
-                // Update spinner for visual feedback
-                displayState.SpinnerFrame = (displayState.SpinnerFrame + 1) % SpinnerFrames.Length;
-
                 // Format and add to display
                 var formatted = AgentMessageFormatter.Format(msg);
                 displayState.AddLine(formatted);
 
                 // Mark UI dirty
-                _agentsDirty = true;
                 if (_selectedAgentId == agent.Id)
                 {
                     _logDirty = true;
