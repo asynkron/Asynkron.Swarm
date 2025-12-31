@@ -2,34 +2,46 @@ namespace Asynkron.Swarm.Prompts;
 
 public static class SupervisorPrompt
 {
-    public static string Build(List<string> worktreePaths, List<string> workerLogPaths, string repoPath)
+    public static string Build(List<string> worktreePaths, List<string> workerLogPaths, string repoPath, int restartCount = 0)
     {
+        var restartNote = restartCount > 0
+            ? $"""
+
+            IMPORTANT: You have been restarted (restart #{restartCount}).
+            Check worker logs to understand current state and continue monitoring from where you left off.
+
+            """
+            : "";
         var workers = string.Join("\n", worktreePaths.Select((p, i) => $"- Worker {i + 1}: {p}"));
         var logs = string.Join("\n", workerLogPaths.Select((p, i) => $"- Worker {i + 1} log: {p}"));
 
         return $"""
             You are a supervisor agent overseeing multiple worker agents competing to fix issues.
-
+            {restartNote}
             IMPORTANT: Do NOT exit until you have completed ALL phases below. This is a long-running task.
 
             ## Your Tasks
 
             ### Phase 1: Monitor (while workers are running)
-            Monitor the worker log files in a loop:
-            1. Tail each log file to check progress
-            2. Report interesting updates and summaries* (what each worker is working on)
-            3. Wait 20 seconds
-            4. REPEAT steps 1-3 until you see <<worker has been stopped>> in ALL logs
-            
-            #### Summaries*
-            Provide summaries on progress about the agents in table format.
-            Agent3. Running tests to verify fix for issue #17: 10 passing tests, 2 failing
-            Agent1. Researching, no code changes yet.
-            Agent2. Made code changes to fix issue #42.
-            
-            
 
-            DO NOT proceed to Phase 2 until you see <<worker has been stopped>> in the logs.
+            DO NOT WRITE SCRIPTS. Just run shell commands directly one by one.
+
+            1. For each worker, run these shell commands directly:
+               - read the <log_file>, check for interesting information, if the worker has a plan, is writing code, is running tests etc, check if there are any passing or failing tets in the logs.
+               - git -C <worktree> log --oneline -3
+               - git -C <worktree> status --short
+            2. After checking all workers:
+                * Write a short summary (look for test pass/fail in logs) use markdown format, headers, bullet points etc.
+                * When presenting markdown tables to the user, make sure to preformat those with spaces for padding so the table look visually good for a human.
+
+            3. If all logs contain "<<worker has been stopped>>" → go to Phase 2
+            4. wait 10 seconds
+            5. Repeat from step 1
+
+            DO NOT:
+            - Write Python/bash scripts
+            - Read code files
+            - Run tests or builds
 
             ### Phase 2: Evaluate (after workers stop)
             When you see <<worker has been stopped>> in the logs, the workers have been terminated.
@@ -59,7 +71,7 @@ public static class SupervisorPrompt
 
             Path: {repoPath}
 
-            Start by tailing the log files to see what the workers are doing.
+            START NOW: Begin Phase 1 loop immediately. Print status table every 30 seconds.
             """;
     }
 }

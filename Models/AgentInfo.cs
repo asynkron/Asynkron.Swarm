@@ -25,5 +25,15 @@ public record AgentInfo
     public required Process Process { get; init; }
     public DateTime StartedAt { get; init; } = DateTime.Now;
 
+    // Restart context
+    public int Round { get; init; }
+    public int AgentNumber { get; init; }
+    public string? TodoFile { get; init; }
+    public AgentType AgentType { get; init; }
+    public List<string>? WorktreePaths { get; init; }  // For supervisor
+    public List<string>? WorkerLogPaths { get; init; } // For supervisor
+    public string? RepoPath { get; init; }             // For supervisor
+    public int RestartCount { get; init; }
+
     public bool IsRunning => !Process.HasExited;
 }

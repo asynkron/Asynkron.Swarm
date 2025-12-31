@@ -16,15 +16,17 @@ public class AgentService
         Directory.CreateDirectory(_logDir);
     }
 
-    public AgentInfo StartWorker(int round, int agentNumber, string worktreePath, string todoFile, AgentType agentType)
+    public AgentInfo StartWorker(int round, int agentNumber, string worktreePath, string todoFile, AgentType agentType, int restartCount = 0)
     {
         var agentId = $"round{round}-worker{agentNumber}";
         var agentName = $"Worker {agentNumber}";
         var logFilePath = Path.Combine(_logDir, $"{agentId}.log");
-        var prompt = WorkerPrompt.Build(todoFile);
+        var prompt = WorkerPrompt.Build(todoFile, restartCount);
 
-        var (fileName, arguments) = GetAgentCommand(agentType, prompt);
-        var process = StartProcess(fileName, arguments, worktreePath, logFilePath);
+        // Use gpt-5.2-codex for workers
+        var model = agentType == AgentType.Codex ? "gpt-5.2-codex" : null;
+        var (fileName, arguments, useStdin) = GetAgentCommand(agentType, prompt, model);
+        var process = StartProcess(fileName, arguments, worktreePath, logFilePath, useStdin ? prompt : null, append: restartCount > 0);
 
         var agent = new AgentInfo
         {
@@ -34,7 +36,13 @@ public class AgentService
             Runtime = agentType == AgentType.Claude ? AgentRuntime.Claude : AgentRuntime.Codex,
             LogPath = logFilePath,
             WorktreePath = worktreePath,
-            Process = process
+            Process = process,
+            // Restart context
+            Round = round,
+            AgentNumber = agentNumber,
+            TodoFile = todoFile,
+            AgentType = agentType,
+            RestartCount = restartCount
         };
 
         _registry.Register(agent);
@@ -46,15 +54,18 @@ public class AgentService
         List<string> worktreePaths,
         List<string> workerLogPaths,
         string repoPath,
-        AgentType agentType)
+        AgentType agentType,
+        int restartCount = 0)
     {
         var agentId = $"round{round}-supervisor";
         var agentName = "Supervisor";
         var logFilePath = Path.Combine(_logDir, $"{agentId}.log");
-        var prompt = SupervisorPrompt.Build(worktreePaths, workerLogPaths, repoPath);
+        var prompt = SupervisorPrompt.Build(worktreePaths, workerLogPaths, repoPath, restartCount);
 
-        var (fileName, arguments) = GetAgentCommand(agentType, prompt);
-        var process = StartProcess(fileName, arguments, repoPath, logFilePath);
+        // Use cheaper model for supervisor (Phase 1 is just observation)
+        var model = agentType == AgentType.Codex ? "gpt-5.1-codex-mini" : null;
+        var (fileName, arguments, useStdin) = GetAgentCommand(agentType, prompt, model);
+        var process = StartProcess(fileName, arguments, repoPath, logFilePath, useStdin ? prompt : null, append: restartCount > 0);
 
         var agent = new AgentInfo
         {
@@ -64,11 +75,58 @@ public class AgentService
             Runtime = agentType == AgentType.Claude ? AgentRuntime.Claude : AgentRuntime.Codex,
             LogPath = logFilePath,
             WorktreePath = null,
-            Process = process
+            Process = process,
+            // Restart context
+            Round = round,
+            AgentType = agentType,
+            WorktreePaths = worktreePaths,
+            WorkerLogPaths = workerLogPaths,
+            RepoPath = repoPath,
+            RestartCount = restartCount
         };
 
         _registry.Register(agent);
         return agent;
+    }
+
+    public AgentInfo? RestartAgent(string agentId)
+    {
+        var agent = _registry.Get(agentId);
+        if (agent == null) return null;
+
+        // Kill the current agent
+        KillAgent(agent);
+
+        // Append restart marker to log
+        var restartMarker = $"\n\n<<agent restarted at {DateTime.Now:O}>>\n\n";
+        File.AppendAllText(agent.LogPath, restartMarker);
+
+        // Remove old agent
+        _registry.Unregister(agentId);
+
+        // Start new agent with incremented restart count
+        var newRestartCount = agent.RestartCount + 1;
+
+        if (agent.Kind == AgentKind.Worker)
+        {
+            return StartWorker(
+                agent.Round,
+                agent.AgentNumber,
+                agent.WorktreePath!,
+                agent.TodoFile!,
+                agent.AgentType,
+                newRestartCount);
+        }
+        else
+        {
+            return StartSupervisor(
+                agent.Round,
+                agent.WorktreePaths!,
+                agent.WorkerLogPaths!,
+                agent.RepoPath!,
+                agent.AgentType,
+                newRestartCount);
+        }
     }
 
     public void KillAgent(AgentInfo agent)
@@ -115,20 +173,30 @@ public class AgentService
         _registry.Clear();
     }
 
-    private static (string FileName, string Arguments) GetAgentCommand(AgentType agentType, string prompt)
+    private static (string FileName, string Arguments, bool UseStdin) GetAgentCommand(AgentType agentType, string prompt, string? model = null)
     {
+        var modelArg = model != null ? $"--model {model} " : "";
+
         return agentType switch
         {
-            AgentType.Claude => ("claude", $"-p --dangerously-skip-permissions \"{EscapeForShell(prompt)}\""),
-            AgentType.Codex => ("codex", $"exec \"{EscapeForShell(prompt)}\" --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"),
+            // Claude needs prompt via stdin in print mode, stream-json for live output
+            AgentType.Claude => ("claude", $"-p --dangerously-skip-permissions --tools default --output-format stream-json --verbose {modelArg}".TrimEnd(), true),
+            AgentType.Codex => ("codex", $"exec \"{EscapeForShell(prompt)}\" --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox {modelArg}".TrimEnd(), false),
             _ => throw new ArgumentOutOfRangeException(nameof(agentType))
         };
     }
 
-    private static Process StartProcess(string fileName, string arguments, string workingDir, string logFilePath)
+    private static Process StartProcess(string fileName, string arguments, string workingDir, string logFilePath, string? stdinContent = null, bool append = false)
     {
-        // Create or truncate log file
-        File.WriteAllText(logFilePath, $"[{DateTime.Now:O}] Agent started\n");
+        // Create/truncate or append to log file
+        if (append)
+        {
+            File.AppendAllText(logFilePath, $"[{DateTime.Now:O}] Agent restarted\n");
+        }
+        else
+        {
+            File.WriteAllText(logFilePath, $"[{DateTime.Now:O}] Agent started\n");
+        }
         File.AppendAllText(logFilePath, $"[{DateTime.Now:O}] Working directory: {workingDir}\n");
         File.AppendAllText(logFilePath, $"[{DateTime.Now:O}] Command: {fileName} {arguments}\n");
         File.AppendAllText(logFilePath, new string('-', 60) + "\n\n");
@@ -142,6 +210,7 @@ public class AgentService
                 WorkingDirectory = workingDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = stdinContent != null,
                 UseShellExecute = false,
                 CreateNoWindow = true
             }
@@ -189,6 +258,13 @@ public class AgentService
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+
+        // Write prompt to stdin if needed
+        if (stdinContent != null)
+        {
+            process.StandardInput.Write(stdinContent);
+            process.StandardInput.Close();
+        }
 
         return process;
     }

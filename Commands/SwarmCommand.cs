@@ -33,9 +33,9 @@ public class SwarmSettings : CommandSettings
 
     [CommandOption("-m|--minutes <MINUTES>")]
     [Description("Minutes to run each round before killing workers")]
-    [DefaultValue(5)]
+    [DefaultValue(15)]
     [UsedImplicitly]
-    public int Minutes { get; init; } = 5;
+    public int Minutes { get; init; } = 15;
 
     [CommandOption("--agent-type <TYPE>")]
     [Description("Agent CLI to use: Claude or Codex")]

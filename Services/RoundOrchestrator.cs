@@ -57,7 +57,7 @@ public class RoundOrchestrator
         var absoluteRepoPath = Path.GetFullPath(options.Repo);
 
         using var cts = new CancellationTokenSource();
-        _ui = new SwarmUI(_registry);
+        _ui = new SwarmUI(_registry, _agentService);
 
         // Start UI immediately
         var uiTask = _ui.RunAsync(cts.Token);

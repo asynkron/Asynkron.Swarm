@@ -48,7 +48,7 @@ public class WorktreeService
     {
         var absoluteRepoPath = Path.GetFullPath(repoPath);
 
-        foreach (var worktreePath in worktreePaths)
+        foreach (var worktreePath in worktreePaths.ToList())
         {
             if (Directory.Exists(worktreePath))
             {
