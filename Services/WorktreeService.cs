@@ -62,10 +62,25 @@ public class WorktreeService
         // Force remove the worktree
         await RunGitAsync(repoPath, $"worktree remove \"{worktreePath}\" --force");
 
-        // Clean up directory if still exists
-        if (Directory.Exists(worktreePath))
+        // Clean up directory if still exists - be resilient to partial deletions
+        try
         {
-            Directory.Delete(worktreePath, recursive: true);
+            if (Directory.Exists(worktreePath))
+            {
+                Directory.Delete(worktreePath, recursive: true);
+            }
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Already gone or partially deleted, that's fine
+        }
+        catch (IOException)
+        {
+            // Some files may be locked, ignore during cleanup
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Permission issue, ignore during cleanup
         }
     }
 

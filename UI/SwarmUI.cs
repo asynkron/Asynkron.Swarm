@@ -171,13 +171,14 @@ public class SwarmUI : IDisposable
 
             // Main render loop - reuse same layout, just update regions
             await AnsiConsole.Live(_layout)
-                .AutoClear(true)
+                .AutoClear(false)
                 .Overflow(VerticalOverflow.Ellipsis)
                 .StartAsync(async ctx =>
                 {
                     while (!token.IsCancellationRequested)
                     {
                         UpdateLayoutRegions();
+                        ctx.UpdateTarget(_layout);
                         ctx.Refresh();
                         await Task.Delay(RefreshMs, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                     }
