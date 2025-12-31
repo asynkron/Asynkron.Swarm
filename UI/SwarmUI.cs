@@ -1,4 +1,5 @@
 using System.Globalization;
+using Asynkron.Swarm.Agents;
 using Asynkron.Swarm.IO;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.Services;
@@ -10,7 +11,6 @@ namespace Asynkron.Swarm.UI;
 public sealed class SwarmUI : IDisposable
 {
     private readonly AgentRegistry _registry;
-    private readonly Services.AgentService? _agentService;
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _lock = new();
 
@@ -21,20 +21,12 @@ public sealed class SwarmUI : IDisposable
     // Focus and scroll state
     private enum FocusPanel { Agents, Log }
     private FocusPanel _focus = FocusPanel.Agents;
-    private int _logScrollOffset; // 0 = bottom (most recent), positive = scroll up
+    private int _logScrollOffset;
 
-    // Async file tailers per agent
-    private readonly Dictionary<string, AsyncFileTailer> _tailers = new();
+    // Display state per agent (now subscribes to agent's own stream)
+    private readonly Dictionary<string, AgentDisplayState> _displayStates = new();
 
-    // Liveness tracking per agent
-    private readonly Dictionary<string, int> _lastLineCount = new();
-    private readonly Dictionary<string, int> _spinnerFrame = new();
-    private readonly Dictionary<string, DateTime> _lastHeartbeat = new();
     private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-    // Idle timeout thresholds
-    private static readonly TimeSpan SupervisorIdleTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan WorkerIdleTimeout = TimeSpan.FromSeconds(180);
 
     // Status messages
     private readonly List<string> _statusMessages = [];
@@ -42,7 +34,6 @@ public sealed class SwarmUI : IDisposable
     private int _currentRound;
     private int _totalRounds;
     private TimeSpan _remainingTime;
-
 
     private const int RefreshMs = 20;
     private const int MaxStatusMessages = 10;
@@ -63,19 +54,14 @@ public sealed class SwarmUI : IDisposable
     private bool _agentsDirty = true;
     private bool _logDirty = true;
 
-    public SwarmUI(AgentRegistry registry, Services.AgentService? agentService = null)
+    public SwarmUI(AgentRegistry registry)
     {
         _registry = registry;
-        _agentService = agentService;
 
         // Initialize with existing agents
         foreach (var agent in _registry.GetAll())
         {
-            _agentIds.Add(agent.Id);
-            var mode = GetTailerMode(agent);
-            var tailer = new AsyncFileTailer(agent.LogPath, maxLines: 500, mode: mode);
-            tailer.Start();
-            _tailers[agent.Id] = tailer;
+            SetupAgent(agent);
         }
 
         if (_agentIds.Count > 0)
@@ -103,16 +89,54 @@ public sealed class SwarmUI : IDisposable
             new Layout("Status").Size(14));
     }
 
-    private void OnAgentAdded(AgentInfo agent)
+    private void SetupAgent(AgentBase agent)
+    {
+        _agentIds.Add(agent.Id);
+
+        var displayState = new AgentDisplayState();
+        _displayStates[agent.Id] = displayState;
+
+        // Subscribe to agent's OnBufferedMessage - only messages the agent considers relevant
+        agent.OnBufferedMessage += msg =>
+        {
+            lock (_lock)
+            {
+                // Update spinner for visual feedback
+                displayState.SpinnerFrame = (displayState.SpinnerFrame + 1) % SpinnerFrames.Length;
+
+                // Format and add to display
+                var formatted = AgentMessageFormatter.Format(msg);
+                displayState.AddLine(formatted);
+
+                // Mark UI dirty
+                _agentsDirty = true;
+                if (_selectedAgentId == agent.Id)
+                {
+                    _logDirty = true;
+                }
+            }
+        };
+
+        // Subscribe to restart events
+        agent.OnRestarted += a =>
+        {
+            lock (_lock)
+            {
+                AddStatusInternal($"[#e5c07b]{a.Name} restarted (count: {a.RestartCount})[/]");
+                _agentsDirty = true;
+                if (_selectedAgentId == a.Id)
+                {
+                    _logDirty = true;
+                }
+            }
+        };
+    }
+
+    private void OnAgentAdded(AgentBase agent)
     {
         lock (_lock)
         {
-            _agentIds.Add(agent.Id);
-            var mode = GetTailerMode(agent);
-            var tailer = new AsyncFileTailer(agent.LogPath, maxLines: 500, mode: mode);
-            tailer.Start();
-            _tailers[agent.Id] = tailer;
-            _lastHeartbeat[agent.Id] = DateTime.Now;
+            SetupAgent(agent);
             _agentsDirty = true;
 
             if (_selectedAgentId == null)
@@ -124,34 +148,34 @@ public sealed class SwarmUI : IDisposable
         }
     }
 
-    private void OnAgentRemoved(AgentInfo agent)
+    private void OnAgentRemoved(AgentBase agent)
     {
         lock (_lock)
         {
             var index = _agentIds.IndexOf(agent.Id);
-            if (index < 0) return;
-            _agentIds.RemoveAt(index);
-
-            if (_tailers.TryGetValue(agent.Id, out var tailer))
+            if (index < 0)
             {
-                tailer.Dispose();
-                _tailers.Remove(agent.Id);
+                return;
             }
 
-            _lastLineCount.Remove(agent.Id);
-            _spinnerFrame.Remove(agent.Id);
-            _lastHeartbeat.Remove(agent.Id);
+            _agentIds.RemoveAt(index);
+
+            _displayStates.Remove(agent.Id);
 
             _agentsDirty = true;
 
-            if (_selectedAgentId != agent.Id) return;
+            if (_selectedAgentId != agent.Id)
+            {
+                return;
+            }
+
             _selectedIndex = Math.Max(0, Math.Min(_selectedIndex, _agentIds.Count - 1));
             _selectedAgentId = _agentIds.Count > 0 ? _agentIds[_selectedIndex] : null;
             _logDirty = true;
         }
     }
 
-    private void OnAgentStopped(AgentInfo agent)
+    private void OnAgentStopped(AgentBase agent)
     {
         lock (_lock)
         {
@@ -243,6 +267,12 @@ public sealed class SwarmUI : IDisposable
                 {
                     while (!token.IsCancellationRequested)
                     {
+                        // Tick all agents (heartbeat check, crash detection, auto-restart)
+                        foreach (var agent in _registry.GetAll())
+                        {
+                            agent.Tick();
+                        }
+
                         UpdateLayoutRegions();
                         ctx.UpdateTarget(_layout);
                         ctx.Refresh();
@@ -284,14 +314,13 @@ public sealed class SwarmUI : IDisposable
                                 {
                                     _selectedIndex--;
                                     _selectedAgentId = _agentIds[_selectedIndex];
-                                    _logScrollOffset = 0; // Reset scroll when changing agent
+                                    _logScrollOffset = 0;
                                     _agentsDirty = true;
                                     _logDirty = true;
                                 }
                             }
                             else
                             {
-                                // Scroll log up (show older content)
                                 _logScrollOffset += 5;
                                 _logDirty = true;
                             }
@@ -305,14 +334,13 @@ public sealed class SwarmUI : IDisposable
                                 {
                                     _selectedIndex++;
                                     _selectedAgentId = _agentIds[_selectedIndex];
-                                    _logScrollOffset = 0; // Reset scroll when changing agent
+                                    _logScrollOffset = 0;
                                     _agentsDirty = true;
                                     _logDirty = true;
                                 }
                             }
                             else
                             {
-                                // Scroll log down (show newer content)
                                 _logScrollOffset = Math.Max(0, _logScrollOffset - 5);
                                 _logDirty = true;
                             }
@@ -321,7 +349,7 @@ public sealed class SwarmUI : IDisposable
                         case ConsoleKey.Home:
                             if (_focus == FocusPanel.Log)
                             {
-                                _logScrollOffset = int.MaxValue; // Scroll to top
+                                _logScrollOffset = int.MaxValue;
                                 _logDirty = true;
                             }
                             break;
@@ -329,7 +357,7 @@ public sealed class SwarmUI : IDisposable
                         case ConsoleKey.End:
                             if (_focus == FocusPanel.Log)
                             {
-                                _logScrollOffset = 0; // Scroll to bottom
+                                _logScrollOffset = 0;
                                 _logDirty = true;
                             }
                             break;
@@ -339,12 +367,14 @@ public sealed class SwarmUI : IDisposable
                             break;
 
                         case ConsoleKey.R:
-                            if (_selectedAgentId != null && _agentService != null)
+                            // Manual restart of selected agent
+                            if (_selectedAgentId != null)
                             {
-                                var newAgent = _agentService.RestartAgent(_selectedAgentId);
-                                if (newAgent != null)
+                                var agent = _registry.Get(_selectedAgentId);
+                                if (agent != null && agent.IsRunning)
                                 {
-                                    AddStatusInternal($"[#e5c07b]Restarted {newAgent.Name}[/]");
+                                    agent.Restart();
+                                    AddStatusInternal($"[#e5c07b]Manual restart: {agent.Name}[/]");
                                     _agentsDirty = true;
                                     _logDirty = true;
                                 }
@@ -369,9 +399,7 @@ public sealed class SwarmUI : IDisposable
                 _headerDirty = false;
             }
 
-            // Check if any agent has new log data (for spinner animation)
-            var livenessChanged = CheckLivenessChanged();
-            if (_agentsDirty || livenessChanged || _cachedAgents == null)
+            if (_agentsDirty || _cachedAgents == null)
             {
                 _cachedAgents = BuildAgentList();
                 _layout["Main"]["Left"]["Agents"].Update(_cachedAgents);
@@ -385,86 +413,17 @@ public sealed class SwarmUI : IDisposable
                 _statusDirty = false;
             }
 
-            // Log panel: check if log content changed
-            var logChanged = CheckLogChanged();
-            if (_logDirty || logChanged || _cachedLog == null)
+            if (_logDirty || _cachedLog == null)
             {
                 _cachedLog = BuildLogPanel();
                 _layout["Main"]["Log"].Update(_cachedLog);
                 _logDirty = false;
             }
-
-            // Check for idle agents and auto-restart
-            CheckAndRestartIdleAgents();
         }
-    }
-
-    private void CheckAndRestartIdleAgents()
-    {
-        if (_agentService == null) return;
-
-        var now = DateTime.Now;
-        foreach (var agentId in _agentIds.ToList()) // ToList to avoid collection modification
-        {
-            var agent = _registry.Get(agentId);
-            if (agent == null || !agent.IsRunning) continue;
-
-            var lastBeat = _lastHeartbeat.GetValueOrDefault(agentId, now);
-            var idleTime = now - lastBeat;
-
-            var timeout = agent.Kind == AgentKind.Supervisor ? SupervisorIdleTimeout : WorkerIdleTimeout;
-
-            if (idleTime > timeout)
-            {
-                AddStatusInternal($"[#e06c75]{agent.Name} idle for {idleTime.TotalSeconds:F0}s, restarting...[/]");
-                var newAgent = _agentService.RestartAgent(agentId);
-                if (newAgent != null)
-                {
-                    AddStatusInternal($"[#98c379]Restarted {newAgent.Name}[/]");
-                    _agentsDirty = true;
-                    _logDirty = true;
-                }
-            }
-        }
-    }
-
-    private bool CheckLogChanged()
-    {
-        // The tailer reads in background, so we always check for updates
-        // A more sophisticated approach would track last-seen line count
-        return _selectedAgentId != null && _tailers.ContainsKey(_selectedAgentId);
-    }
-
-    private bool CheckLivenessChanged()
-    {
-        // Check if any agent has received new log lines AND update heartbeats
-        // IMPORTANT: We must update _lastLineCount HERE to avoid race conditions
-        // where BuildAgentList updates it separately and heartbeat gets missed
-        var changed = false;
-        foreach (var agentId in _agentIds)
-        {
-            var tailer = _tailers.GetValueOrDefault(agentId);
-            if (tailer == null) continue;
-
-            var currentCount = tailer.TotalLineCount;
-            var lastCount = _lastLineCount.GetValueOrDefault(agentId, 0);
-
-            if (currentCount != lastCount)
-            {
-                // Atomically update stored count, heartbeat, AND spinner
-                _lastLineCount[agentId] = currentCount;
-                _lastHeartbeat[agentId] = DateTime.Now;
-                var frame = _spinnerFrame.GetValueOrDefault(agentId, 0);
-                _spinnerFrame[agentId] = (frame + 1) % SpinnerFrames.Length;
-                changed = true;
-            }
-        }
-        return changed;
     }
 
     private Panel BuildHeader()
     {
-        // Called with _lock held
         var roundText = _totalRounds > 0 ? $"Round [#61afef]{_currentRound}[/]/[#5c6370]{_totalRounds}[/]" : "";
         var timeText = _remainingTime > TimeSpan.Zero ? $"[#e5c07b]{_remainingTime:mm\\:ss}[/] remaining" : "";
         var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[#5c6370]│[/] {_currentPhase}" : "";
@@ -478,7 +437,6 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildStatusPanel()
     {
-        // Called with _lock held
         var content = _statusMessages.Count > 0
             ? string.Join("\n", _statusMessages)
             : "[#5c6370]No status messages[/]";
@@ -491,7 +449,6 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildAgentList()
     {
-        // Called with _lock held
         var table = new Table()
             .Border(TableBorder.None)
             .HideHeaders()
@@ -502,19 +459,25 @@ public sealed class SwarmUI : IDisposable
         {
             var agentId = _agentIds[i];
             var agent = _registry.Get(agentId);
-            if (agent == null) continue;
+            if (agent == null)
+            {
+                continue;
+            }
 
-            // Spinner frame and heartbeat are updated in CheckLivenessChanged()
+            var displayState = _displayStates.GetValueOrDefault(agentId);
+            var spinnerFrame = displayState?.SpinnerFrame ?? 0;
+
             var statusIcon = agent.IsRunning
-                ? $"[#98c379]{SpinnerFrames[_spinnerFrame.GetValueOrDefault(agentId, 0)]}[/]"
+                ? $"[#98c379]{SpinnerFrames[spinnerFrame]}[/]"
                 : "[#e06c75]○[/]";
 
             var isSelected = i == _selectedIndex;
-            var kindIcon = agent.Kind == AgentKind.Supervisor ? "[#c678dd]S[/]" : "[#61afef]W[/]";
+            var kindIcon = agent is SupervisorAgent ? "[#c678dd]S[/]" : "[#61afef]W[/]";
 
+            var restartInfo = agent.RestartCount > 0 ? $" [#5c6370](r{agent.RestartCount})[/]" : "";
             var name = isSelected
-                ? $"[bold reverse] {kindIcon} {agent.Name} [/]"
-                : $" {kindIcon} {agent.Name}";
+                ? $"[bold reverse] {kindIcon} {agent.Name}{restartInfo} [/]"
+                : $" {kindIcon} {agent.Name}{restartInfo}";
 
             table.AddRow(statusIcon, name);
         }
@@ -524,8 +487,8 @@ public sealed class SwarmUI : IDisposable
             table.AddRow(" ", "[#5c6370]No agents running[/]");
         }
 
-        var focusIndicator = _focus == FocusPanel.Agents ? "[#56b6c2]●[/] " : "";
-        var borderColor = _focus == FocusPanel.Agents ? new Color(86, 182, 194) : new Color(92, 99, 112);
+        var focusIndicator = _focus == FocusPanel.Agents ? "[#61afef]●[/] " : "";
+        var borderColor = _focus == FocusPanel.Agents ? new Color(97, 175, 239) : new Color(92, 99, 112);
 
         return new Panel(table)
             .Header($"{focusIndicator}[bold]Agents[/] [#5c6370](Tab, ↑/↓, r=restart, q)[/]")
@@ -535,7 +498,6 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildLogPanel()
     {
-        // Called with _lock held
         if (_selectedAgentId == null)
         {
             return new Panel("[#5c6370]Select an agent to view logs[/]")
@@ -553,61 +515,35 @@ public sealed class SwarmUI : IDisposable
                 .Expand();
         }
 
-        var tailer = _tailers.GetValueOrDefault(_selectedAgentId);
-        var content = tailer?.Tail(lines: LogDisplayLines, offset: _logScrollOffset) ?? "[Waiting for log file...]";
-        var lineCount = tailer?.TotalLineCount ?? 0;
-        var totalLines = tailer?.LineCount ?? 0;
+        var displayState = _displayStates.GetValueOrDefault(_selectedAgentId);
+        var content = displayState?.GetDisplay(LogDisplayLines, _logScrollOffset) ?? "[Waiting for output...]";
+        var lineCount = displayState?.LineCount ?? 0;
 
         var statusText = agent.IsRunning ? "[#98c379]Running[/]" : "[#e06c75]Stopped[/]";
         var timeStamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         var scrollInfo = _logScrollOffset > 0 ? $" [#d19a66]↑{_logScrollOffset}[/]" : "";
-        var focusIndicator = _focus == FocusPanel.Log ? "[#56b6c2]●[/] " : "";
+        var focusIndicator = _focus == FocusPanel.Log ? "[#61afef]●[/] " : "";
 
-        var headerText = $"{focusIndicator}[bold]{agent.Name}[/] - {statusText} - [#5c6370]{agent.Runtime}[/] - [#5c6370]{timeStamp} ({lineCount}/{totalLines} lines)[/]{scrollInfo}";
+        var headerText = $"{focusIndicator}[bold]{agent.Name}[/] - {statusText} - [#5c6370]{agent.Cli.FileName}[/] - [#5c6370]{timeStamp} ({lineCount} lines)[/]{scrollInfo}";
 
-        // Use Markup for Codex/Claude (has color tags), Text for others
         IRenderable logContent;
-        if (agent.Runtime is AgentRuntime.Codex or AgentRuntime.Claude)
+        try
         {
-            try
-            {
-                logContent = new Markup(content);
-            }
-            catch
-            {
-                // Malformed markup, fall back to plain text
-                logContent = new Text(content);
-            }
+            logContent = new Markup(content);
         }
-        else
+        catch
         {
             logContent = new Text(content);
         }
 
         var borderColor = _focus == FocusPanel.Log
-            ? new Color(86, 182, 194)
+            ? new Color(97, 175, 239)
             : new Color(92, 99, 112);
 
         return new Panel(logContent)
             .Header(headerText)
             .BorderColor(borderColor)
             .Expand();
-    }
-
-    private static TailerMode GetTailerMode(AgentInfo agent)
-    {
-        // Supervisors get filtered output (no tool use/results)
-        if (agent.Kind == AgentKind.Supervisor && agent.Runtime == AgentRuntime.Claude)
-        {
-            return TailerMode.ClaudeSupervisor;
-        }
-
-        return agent.Runtime switch
-        {
-            AgentRuntime.Codex => TailerMode.Codex,
-            AgentRuntime.Claude => TailerMode.Claude,
-            _ => TailerMode.Plain
-        };
     }
 
     public void Stop()
@@ -620,12 +556,6 @@ public sealed class SwarmUI : IDisposable
         _registry.AgentAdded -= OnAgentAdded;
         _registry.AgentRemoved -= OnAgentRemoved;
         _registry.AgentStopped -= OnAgentStopped;
-
-        // Dispose all tailers (stops background tasks, closes streams)
-        foreach (var tailer in _tailers.Values)
-        {
-            tailer.Dispose();
-        }
 
         _cts.Dispose();
     }

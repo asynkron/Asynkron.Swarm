@@ -55,8 +55,11 @@ public class TodoService
 
         foreach (var path in allWorktreePaths)
         {
-            if (path == currentWorktree) continue;
-            
+            if (path == currentWorktree)
+            {
+                continue;
+            }
+
             var name = Path.GetFileName(path);
             sb
                 .Append($"- {name}: {path}")

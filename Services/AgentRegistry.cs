@@ -1,17 +1,18 @@
 using System.Collections.Concurrent;
+using Asynkron.Swarm.Agents;
 using Asynkron.Swarm.Models;
 
 namespace Asynkron.Swarm.Services;
 
-public class AgentRegistry
+public sealed class AgentRegistry
 {
-    private readonly ConcurrentDictionary<string, AgentInfo> _agents = new();
+    private readonly ConcurrentDictionary<string, AgentBase> _agents = new();
 
-    public event Action<AgentInfo>? AgentAdded;
-    public event Action<AgentInfo>? AgentRemoved;
-    public event Action<AgentInfo>? AgentStopped;
+    public event Action<AgentBase>? AgentAdded;
+    public event Action<AgentBase>? AgentRemoved;
+    public event Action<AgentBase>? AgentStopped;
 
-    public void Register(AgentInfo agent)
+    public void Register(AgentBase agent)
     {
         if (_agents.TryAdd(agent.Id, agent))
         {
@@ -27,24 +28,29 @@ public class AgentRegistry
         }
     }
 
-    public AgentInfo? Get(string agentId)
+    public AgentBase? Get(string agentId)
     {
         return _agents.GetValueOrDefault(agentId);
     }
 
-    public IReadOnlyList<AgentInfo> GetAll()
+    public IReadOnlyList<AgentBase> GetAll()
     {
         return _agents.Values.ToList();
     }
 
-    public IReadOnlyList<AgentInfo> GetRunning()
+    public IReadOnlyList<AgentBase> GetRunning()
     {
         return _agents.Values.Where(a => a.IsRunning).ToList();
     }
 
-    public IReadOnlyList<AgentInfo> GetByKind(AgentKind kind)
+    public IReadOnlyList<WorkerAgent> GetWorkers()
     {
-        return _agents.Values.Where(a => a.Kind == kind).ToList();
+        return _agents.Values.OfType<WorkerAgent>().ToList();
+    }
+
+    public IReadOnlyList<SupervisorAgent> GetSupervisors()
+    {
+        return _agents.Values.OfType<SupervisorAgent>().ToList();
     }
 
     public void MarkStopped(string agentId)

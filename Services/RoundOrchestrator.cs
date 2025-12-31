@@ -1,3 +1,4 @@
+using Asynkron.Swarm.Agents;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.UI;
 
@@ -28,11 +29,8 @@ public class RoundOrchestrator
         {
             try
             {
-                if (!agent.Process.HasExited)
-                {
-                    agent.Process.Kill(entireProcessTree: true);
-                    _ui?.AddStatus($"Killed {agent.Name}");
-                }
+                agent.Stop();
+                _ui?.AddStatus($"Killed {agent.Name}");
             }
             catch
             {
@@ -57,7 +55,7 @@ public class RoundOrchestrator
         var absoluteRepoPath = Path.GetFullPath(options.Repo);
 
         using var cts = new CancellationTokenSource();
-        _ui = new SwarmUI(_registry, _agentService);
+        _ui = new SwarmUI(_registry);
 
         // Start UI immediately
         var uiTask = _ui.RunAsync(cts.Token);
@@ -125,17 +123,18 @@ public class RoundOrchestrator
 
             // Step 4: Start worker agents (Claude first, then Codex)
             _ui.SetPhase("Starting workers...");
-            var workers = new List<AgentInfo>();
+            var workers = new List<WorkerAgent>();
             for (var i = 0; i < worktreePaths.Count; i++)
             {
                 var agentType = i < options.ClaudeWorkers ? AgentType.Claude : AgentType.Codex;
-                var worker = _agentService.StartWorker(
+                var worker = _agentService.CreateWorker(
                     round,
                     i + 1,
                     worktreePaths[i],
                     options.Todo,
                     sharedFilePath,
                     agentType);
+                worker.Start();
                 workers.Add(worker);
                 _ui.AddStatus($"Started {worker.Name} ({agentType})");
             }
@@ -143,19 +142,26 @@ public class RoundOrchestrator
             // Step 5: Start supervisor agent
             _ui.SetPhase("Starting supervisor...");
             var workerLogPaths = workers.Select(w => w.LogPath).ToList();
-            var supervisor = _agentService.StartSupervisor(
+            var supervisor = _agentService.CreateSupervisor(
                 round,
                 worktreePaths,
                 workerLogPaths,
                 repoPath,
                 options.SupervisorType);
+            supervisor.Start();
             _ui.AddStatus($"Started Supervisor ({options.SupervisorType})");
+
+            // Subscribe to restart events for status messages
+            supervisor.OnRestarted += a => _ui.AddStatus($"[#98c379]Restarted {a.Name}[/]");
+            foreach (var worker in workers)
+            {
+                worker.OnRestarted += a => _ui.AddStatus($"[#98c379]Restarted {a.Name}[/]");
+            }
 
             // Step 6: Wait for timeout with countdown
             _ui.SetPhase("Workers competing...");
             var timeout = TimeSpan.FromMinutes(options.Minutes);
             var endTime = DateTime.Now.Add(timeout);
-            var lastSupervisorRestart = DateTime.MinValue;
 
             while (DateTime.Now < endTime && !token.IsCancellationRequested)
             {
@@ -163,36 +169,21 @@ public class RoundOrchestrator
                 _ui.SetRemainingTime(remaining);
 
                 // Check if all workers finished early
-                if (workers.All(w => w.Process.HasExited))
+                if (workers.All(w => !w.IsRunning))
                 {
                     _ui.AddStatus("All workers finished early");
                     break;
                 }
 
-                // Check if supervisor died and restart it (with 30s cooldown)
-                if (supervisor.Process.HasExited && DateTime.Now - lastSupervisorRestart > TimeSpan.FromSeconds(30))
-                {
-                    _ui.AddStatus("[yellow]Supervisor died, restarting...[/]");
-                    _agentService.RemoveAgent(supervisor);
-                    supervisor = _agentService.StartSupervisor(
-                        round,
-                        worktreePaths,
-                        workerLogPaths,
-                        repoPath,
-                        options.SupervisorType);
-                    _ui.AddStatus("Restarted Supervisor");
-                    lastSupervisorRestart = DateTime.Now;
-                }
-
                 await Task.Delay(250, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
-            // Step 7: Kill all workers and append stopped marker
+            // Step 7: Stop all workers and append stopped marker
             _ui.SetPhase("Stopping workers...");
             _ui.SetRemainingTime(TimeSpan.Zero);
-            await _agentService.KillAllWorkersAsync();
+            await _agentService.StopAllWorkersAsync();
 
-            // Remove dead workers from UI
+            // Remove dead workers from registry
             foreach (var worker in workers)
             {
                 _agentService.RemoveAgent(worker);
@@ -206,7 +197,7 @@ public class RoundOrchestrator
             if (!supervisorComplete)
             {
                 _ui.AddStatus("Supervisor timed out");
-                _agentService.KillAgent(supervisor);
+                supervisor.Stop();
             }
             else
             {
@@ -232,16 +223,17 @@ public class RoundOrchestrator
         }
     }
 
-    private static async Task<bool> WaitForAgentAsync(AgentInfo agent, TimeSpan timeout)
+    private static async Task<bool> WaitForAgentAsync(AgentBase agent, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
 
         while (!cts.Token.IsCancellationRequested)
         {
-            if (agent.Process.HasExited)
+            if (!agent.IsRunning)
             {
                 return true;
             }
+
             await Task.Delay(1000, cts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 

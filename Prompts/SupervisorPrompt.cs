@@ -35,7 +35,7 @@ public static class SupervisorPrompt
                 * When presenting markdown tables to the user, make sure to preformat those with spaces for padding so the table look visually good for a human.
 
             3. If all logs contain "<<worker has been stopped>>" → go to Phase 2
-            4. wait 10 seconds
+            4. wait 5 seconds
             5. Repeat from step 1
 
             DO NOT:
