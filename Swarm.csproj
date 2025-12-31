@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Asynkron.Swarm</RootNamespace>
+    <AssemblyName>swarm</AssemblyName>
+
+    <!-- Global Tool Configuration -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>swarm</ToolCommandName>
+    <PackageOutputPath>./nupkg</PackageOutputPath>
+
+    <!-- Package Metadata -->
+    <PackageId>Asynkron.Swarm</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Asynkron</Authors>
+    <Description>AI Agent Swarm Orchestrator - Run multiple AI coding agents in parallel on git worktrees</Description>
+    <PackageProjectUrl>https://github.com/asynkron/Asynkron.Swarm</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/asynkron/Asynkron.Swarm</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>ai;agent;swarm;claude;codex;git;worktree;cli</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.49.1" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.49.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
