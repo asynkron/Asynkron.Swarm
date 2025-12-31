@@ -15,6 +15,8 @@ public sealed partial class AsyncFileTailer : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _readTask;
     private int _totalLineCount;
+    private string _cachedContent = "";
+    private bool _contentDirty = true;
 
     public int TotalLineCount => _totalLineCount;
 
@@ -51,10 +53,14 @@ public sealed partial class AsyncFileTailer : IDisposable
 
             if (line != null)
             {
+                // Clean the line immediately when read
+                var cleanedLine = CleanLine(line);
+
                 lock (_lock)
                 {
-                    _lines.Add(line);
+                    _lines.Add(cleanedLine);
                     _totalLineCount++;
+                    _contentDirty = true;
 
                     while (_lines.Count > _maxLines)
                     {
@@ -79,16 +85,39 @@ public sealed partial class AsyncFileTailer : IDisposable
                 return _stream == null ? "[Waiting for log file...]" : "[Empty log file]";
             }
 
-            var count = lines ?? _maxLines;
-            var tailLines = _lines.TakeLast(count);
-            var cleaned = tailLines.Select(StripAnsiCodes);
-            return string.Join(Environment.NewLine, cleaned);
+            // Only rebuild content if dirty
+            if (_contentDirty || lines.HasValue)
+            {
+                var count = lines ?? _maxLines;
+                var tailLines = _lines.TakeLast(count);
+                _cachedContent = string.Join(Environment.NewLine, tailLines);
+
+                if (!lines.HasValue)
+                {
+                    _contentDirty = false;
+                }
+            }
+
+            return _cachedContent;
         }
     }
 
-    private static string StripAnsiCodes(string input)
+    private static string CleanLine(string input)
     {
-        return AnsiRegex().Replace(input, "");
+        // Strip ANSI escape codes
+        var stripped = AnsiRegex().Replace(input, "");
+
+        // Remove non-printable characters (keep tab, newline, carriage return)
+        var sb = new StringBuilder(stripped.Length);
+        foreach (var c in stripped)
+        {
+            if (c >= 32 || c == '\t' || c == '\n' || c == '\r')
+            {
+                sb.Append(c);
+            }
+        }
+
+        return sb.ToString();
     }
 
     [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]")]
