@@ -16,76 +16,66 @@ public class GeminiCli : AgentCliBase
 
     protected override IEnumerable<AgentMessage> Parse(string line)
     {
-        if (string.IsNullOrWhiteSpace(line))
+        if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{'))
+            return string.IsNullOrWhiteSpace(line) ? [] : [new AgentMessage(AgentMessageKind.Say, line)];
+
+        using var doc = JsonDocument.Parse(line);
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("type", out var typeEl))
             return [];
 
-        // Skip non-JSON lines (like "YOLO mode is enabled", "Loaded cached credentials", "[ERROR]...")
-        if (!line.TrimStart().StartsWith('{'))
-            return [];
-
-        JsonDocument? doc = null;
-        List<AgentMessage> results = [];
-
-        try
+        var type = typeEl.GetString();
+        return type switch
         {
-            doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
+            "message" => ParseMessage(root),
+            "tool_use" => ParseToolUse(root),
+            "tool_result" => ParseToolResult(root),
+            "result" => ParseResult(root),
+            _ => []
+        };
+    }
 
-            if (!root.TryGetProperty("type", out var typeEl))
-                return results;
+    private static IEnumerable<AgentMessage> ParseMessage(JsonElement root)
+    {
+        if (root.TryGetProperty("role", out var role) && role.GetString() == "assistant" &&
+            root.TryGetProperty("content", out var content))
+        {
+            var text = content.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(text))
+                yield return new AgentMessage(AgentMessageKind.Say, text);
+        }
+    }
 
-            var type = typeEl.GetString();
+    private static IEnumerable<AgentMessage> ParseToolUse(JsonElement root)
+    {
+        var toolName = root.TryGetProperty("tool_name", out var name) ? name.GetString() : null;
+        var toolParams = root.TryGetProperty("parameters", out var p) ? p.ToString() : null;
+        var summary = GetToolSummary(toolName, root);
+        yield return new AgentMessage(AgentMessageKind.Do, summary, toolName, toolParams);
+    }
 
-            switch (type)
+    private static IEnumerable<AgentMessage> ParseToolResult(JsonElement root)
+    {
+        if (root.TryGetProperty("output", out var output))
+        {
+            var outputStr = output.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(outputStr))
+                yield return new AgentMessage(AgentMessageKind.See, outputStr);
+        }
+    }
+
+    private static IEnumerable<AgentMessage> ParseResult(JsonElement root)
+    {
+        if (root.TryGetProperty("status", out var resultStatus))
+        {
+            var statusStr = resultStatus.GetString();
+            if (statusStr == "error" && root.TryGetProperty("error", out var error))
             {
-                case "message" when root.TryGetProperty("role", out var role) && role.GetString() == "assistant":
-                    if (root.TryGetProperty("content", out var content))
-                    {
-                        var text = content.GetString() ?? "";
-                        if (!string.IsNullOrWhiteSpace(text))
-                            results.Add(new AgentMessage(AgentMessageKind.Say, text));
-                    }
-                    break;
-
-                case "tool_use":
-                    var toolName = root.TryGetProperty("tool_name", out var name) ? name.GetString() : null;
-                    var toolParams = root.TryGetProperty("parameters", out var p) ? p.ToString() : null;
-                    var summary = GetToolSummary(toolName, root);
-                    results.Add(new AgentMessage(AgentMessageKind.Do, summary, toolName, toolParams));
-                    break;
-
-                case "tool_result":
-                    if (root.TryGetProperty("status", out var status))
-                    {
-                        var statusStr = status.GetString();
-                        results.Add(new AgentMessage(AgentMessageKind.See, $"[{statusStr}]"));
-                    }
-                    break;
-
-                case "result":
-                    if (root.TryGetProperty("status", out var resultStatus))
-                    {
-                        var statusStr = resultStatus.GetString();
-                        if (statusStr == "error" && root.TryGetProperty("error", out var error))
-                        {
-                            var errorMsg = error.TryGetProperty("message", out var msg) ? msg.GetString() : "Unknown error";
-                            results.Add(new AgentMessage(AgentMessageKind.Say, $"[Error: {errorMsg}]"));
-                        }
-                    }
-                    break;
+                var errorMsg = error.TryGetProperty("message", out var msg) ? msg.GetString() : "Unknown error";
+                yield return new AgentMessage(AgentMessageKind.Say, $"[Error: {errorMsg}]");
             }
         }
-        catch (JsonException)
-        {
-            // Not JSON - treat as plain Say
-            results.Add(new AgentMessage(AgentMessageKind.Say, line));
-        }
-        finally
-        {
-            doc?.Dispose();
-        }
-
-        return results;
     }
 
     private static string GetToolSummary(string? toolName, JsonElement root)
@@ -97,14 +87,18 @@ public class GeminiCli : AgentCliBase
 
         return toolName switch
         {
+            "run_shell_command" when parameters.TryGetProperty("command", out var cmd) =>
+                $"$ {cmd.GetString()}",
             "shell" when parameters.TryGetProperty("command", out var cmd) =>
                 $"$ {cmd.GetString()}",
-            "read_file" when parameters.TryGetProperty("path", out var path) =>
+            "read_file" when parameters.TryGetProperty("file_path", out var path) =>
                 $"read: {path.GetString()}",
-            "write_file" when parameters.TryGetProperty("path", out var path) =>
+            "write_file" when parameters.TryGetProperty("file_path", out var path) =>
                 $"write: {path.GetString()}",
-            "edit_file" when parameters.TryGetProperty("path", out var path) =>
+            "edit_file" when parameters.TryGetProperty("file_path", out var path) =>
                 $"edit: {path.GetString()}",
+            "replace" when parameters.TryGetProperty("file_path", out var path) =>
+                $"replace: {path.GetString()}",
             "glob" when parameters.TryGetProperty("pattern", out var pattern) =>
                 $"glob: {pattern.GetString()}",
             "grep" when parameters.TryGetProperty("pattern", out var pattern) =>
