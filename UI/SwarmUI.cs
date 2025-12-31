@@ -33,7 +33,7 @@ public sealed class SwarmUI : IDisposable
     private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     // Idle timeout thresholds
-    private static readonly TimeSpan SupervisorIdleTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SupervisorIdleTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan WorkerIdleTimeout = TimeSpan.FromSeconds(180);
 
     // Status messages
@@ -392,6 +392,38 @@ public sealed class SwarmUI : IDisposable
                 _cachedLog = BuildLogPanel();
                 _layout["Main"]["Log"].Update(_cachedLog);
                 _logDirty = false;
+            }
+
+            // Check for idle agents and auto-restart
+            CheckAndRestartIdleAgents();
+        }
+    }
+
+    private void CheckAndRestartIdleAgents()
+    {
+        if (_agentService == null) return;
+
+        var now = DateTime.Now;
+        foreach (var agentId in _agentIds.ToList()) // ToList to avoid collection modification
+        {
+            var agent = _registry.Get(agentId);
+            if (agent == null || !agent.IsRunning) continue;
+
+            var lastBeat = _lastHeartbeat.GetValueOrDefault(agentId, now);
+            var idleTime = now - lastBeat;
+
+            var timeout = agent.Kind == AgentKind.Supervisor ? SupervisorIdleTimeout : WorkerIdleTimeout;
+
+            if (idleTime > timeout)
+            {
+                AddStatusInternal($"[#e06c75]{agent.Name} idle for {idleTime.TotalSeconds:F0}s, restarting...[/]");
+                var newAgent = _agentService.RestartAgent(agentId);
+                if (newAgent != null)
+                {
+                    AddStatusInternal($"[#98c379]Restarted {newAgent.Name}[/]");
+                    _agentsDirty = true;
+                    _logDirty = true;
+                }
             }
         }
     }
