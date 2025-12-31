@@ -32,6 +32,18 @@ public sealed class SwarmUI : IDisposable
     // Reusable layout structure
     private readonly Layout _layout;
 
+    // Cached panels - only rebuild when dirty
+    private Panel? _cachedHeader;
+    private Panel? _cachedStatus;
+    private Panel? _cachedAgents;
+    private Panel? _cachedLog;
+
+    // Dirty flags
+    private bool _headerDirty = true;
+    private bool _statusDirty = true;
+    private bool _agentsDirty = true;
+    private bool _logDirty = true;
+
     private sealed class LogCache
     {
         public long LastPosition { get; set; }
@@ -83,11 +95,13 @@ public sealed class SwarmUI : IDisposable
         {
             _agentIds.Add(agent.Id);
             _logCaches[agent.Id] = new LogCache();
+            _agentsDirty = true;
 
             if (_selectedAgentId == null)
             {
                 _selectedAgentId = agent.Id;
                 _selectedIndex = 0;
+                _logDirty = true;
             }
         }
     }
@@ -97,31 +111,40 @@ public sealed class SwarmUI : IDisposable
         lock (_lock)
         {
             var index = _agentIds.IndexOf(agent.Id);
-            if (index >= 0)
-            {
-                _agentIds.RemoveAt(index);
-                _logCaches.Remove(agent.Id);
+            if (index < 0) return;
+            _agentIds.RemoveAt(index);
+            _logCaches.Remove(agent.Id);
+            _agentsDirty = true;
 
-                if (_selectedAgentId == agent.Id)
-                {
-                    _selectedIndex = Math.Max(0, Math.Min(_selectedIndex, _agentIds.Count - 1));
-                    _selectedAgentId = _agentIds.Count > 0 ? _agentIds[_selectedIndex] : null;
-                }
-            }
+            if (_selectedAgentId != agent.Id) return;
+            _selectedIndex = Math.Max(0, Math.Min(_selectedIndex, _agentIds.Count - 1));
+            _selectedAgentId = _agentIds.Count > 0 ? _agentIds[_selectedIndex] : null;
+            _logDirty = true;
         }
     }
 
     private void OnAgentStopped(AgentInfo agent)
     {
-        // Agent stopped but not removed yet - UI will show it as stopped
+        lock (_lock)
+        {
+            _agentsDirty = true;
+            if (_selectedAgentId == agent.Id)
+            {
+                _logDirty = true;
+            }
+        }
     }
 
     public void SetRound(int round, int total)
     {
         lock (_lock)
         {
-            _currentRound = round;
-            _totalRounds = total;
+            if (_currentRound != round || _totalRounds != total)
+            {
+                _currentRound = round;
+                _totalRounds = total;
+                _headerDirty = true;
+            }
         }
     }
 
@@ -129,8 +152,12 @@ public sealed class SwarmUI : IDisposable
     {
         lock (_lock)
         {
-            _currentPhase = phase;
-            AddStatus(phase);
+            if (_currentPhase != phase)
+            {
+                _currentPhase = phase;
+                _headerDirty = true;
+            }
+            AddStatusInternal(phase);
         }
     }
 
@@ -138,7 +165,11 @@ public sealed class SwarmUI : IDisposable
     {
         lock (_lock)
         {
-            _remainingTime = remaining;
+            if (_remainingTime != remaining)
+            {
+                _remainingTime = remaining;
+                _headerDirty = true;
+            }
         }
     }
 
@@ -146,12 +177,18 @@ public sealed class SwarmUI : IDisposable
     {
         lock (_lock)
         {
-            _statusMessages.Add($"[grey]{DateTime.Now:HH:mm:ss}[/] {message}");
-            while (_statusMessages.Count > MaxStatusMessages)
-            {
-                _statusMessages.RemoveAt(0);
-            }
+            AddStatusInternal(message);
         }
+    }
+
+    private void AddStatusInternal(string message)
+    {
+        _statusMessages.Add($"[grey]{DateTime.Now:HH:mm:ss}[/] {message}");
+        while (_statusMessages.Count > MaxStatusMessages)
+        {
+            _statusMessages.RemoveAt(0);
+        }
+        _statusDirty = true;
     }
 
     public async Task RunAsync(CancellationToken externalToken)
@@ -211,6 +248,8 @@ public sealed class SwarmUI : IDisposable
                             {
                                 _selectedIndex--;
                                 _selectedAgentId = _agentIds[_selectedIndex];
+                                _agentsDirty = true;
+                                _logDirty = true;
                             }
                             break;
 
@@ -220,6 +259,8 @@ public sealed class SwarmUI : IDisposable
                             {
                                 _selectedIndex++;
                                 _selectedAgentId = _agentIds[_selectedIndex];
+                                _agentsDirty = true;
+                                _logDirty = true;
                             }
                             break;
 
@@ -236,29 +277,67 @@ public sealed class SwarmUI : IDisposable
 
     private void UpdateLayoutRegions()
     {
-        _layout["Header"].Update(BuildHeader());
-        _layout["Main"]["Left"]["Agents"].Update(BuildAgentList());
-        _layout["Main"]["Left"]["Status"].Update(BuildStatusPanel());
-        _layout["Main"]["Log"].Update(BuildLogPanel());
+        lock (_lock)
+        {
+            if (_headerDirty || _cachedHeader == null)
+            {
+                _cachedHeader = BuildHeader();
+                _layout["Header"].Update(_cachedHeader);
+                _headerDirty = false;
+            }
+
+            if (_agentsDirty || _cachedAgents == null)
+            {
+                _cachedAgents = BuildAgentList();
+                _layout["Main"]["Left"]["Agents"].Update(_cachedAgents);
+                _agentsDirty = false;
+            }
+
+            if (_statusDirty || _cachedStatus == null)
+            {
+                _cachedStatus = BuildStatusPanel();
+                _layout["Main"]["Left"]["Status"].Update(_cachedStatus);
+                _statusDirty = false;
+            }
+
+            // Log panel: check if log content changed
+            var logChanged = CheckLogChanged();
+            if (_logDirty || logChanged || _cachedLog == null)
+            {
+                _cachedLog = BuildLogPanel();
+                _layout["Main"]["Log"].Update(_cachedLog);
+                _logDirty = false;
+            }
+        }
+    }
+
+    private bool CheckLogChanged()
+    {
+        if (_selectedAgentId == null) return false;
+        var cache = _logCaches.GetValueOrDefault(_selectedAgentId);
+        if (cache == null) return false;
+
+        var agent = _registry.Get(_selectedAgentId);
+        if (agent == null) return false;
+
+        try
+        {
+            if (!File.Exists(agent.LogPath)) return false;
+            var fileInfo = new FileInfo(agent.LogPath);
+            return fileInfo.Length != cache.LastSize;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private Panel BuildHeader()
     {
-        int round, total;
-        string phase;
-        TimeSpan remaining;
-
-        lock (_lock)
-        {
-            round = _currentRound;
-            total = _totalRounds;
-            phase = _currentPhase;
-            remaining = _remainingTime;
-        }
-
-        var roundText = total > 0 ? $"Round [cyan]{round}[/]/[grey]{total}[/]" : "";
-        var timeText = remaining > TimeSpan.Zero ? $"[yellow]{remaining:mm\\:ss}[/] remaining" : "";
-        var phaseText = !string.IsNullOrEmpty(phase) ? $"[grey]│[/] {phase}" : "";
+        // Called with _lock held
+        var roundText = _totalRounds > 0 ? $"Round [cyan]{_currentRound}[/]/[grey]{_totalRounds}[/]" : "";
+        var timeText = _remainingTime > TimeSpan.Zero ? $"[yellow]{_remainingTime:mm\\:ss}[/] remaining" : "";
+        var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[grey]│[/] {_currentPhase}" : "";
 
         var content = $"[bold cyan]SWARM[/] {roundText} {timeText} {phaseText}";
 
@@ -269,14 +348,9 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildStatusPanel()
     {
-        List<string> messages;
-        lock (_lock)
-        {
-            messages = _statusMessages.ToList();
-        }
-
-        var content = messages.Count > 0
-            ? string.Join("\n", messages)
+        // Called with _lock held
+        var content = _statusMessages.Count > 0
+            ? string.Join("\n", _statusMessages)
             : "[grey]No status messages[/]";
 
         return new Panel(new Markup(content))
@@ -287,30 +361,28 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildAgentList()
     {
+        // Called with _lock held
         var table = new Table()
             .Border(TableBorder.None)
             .HideHeaders()
             .AddColumn("Status", c => c.Width(3))
             .AddColumn("Agent");
 
-        lock (_lock)
+        for (var i = 0; i < _agentIds.Count; i++)
         {
-            for (var i = 0; i < _agentIds.Count; i++)
-            {
-                var agentId = _agentIds[i];
-                var agent = _registry.Get(agentId);
-                if (agent == null) continue;
+            var agentId = _agentIds[i];
+            var agent = _registry.Get(agentId);
+            if (agent == null) continue;
 
-                var isSelected = i == _selectedIndex;
-                var statusIcon = agent.IsRunning ? "[green]●[/]" : "[red]○[/]";
-                var kindIcon = agent.Kind == AgentKind.Supervisor ? "[yellow]S[/]" : "[cyan]W[/]";
+            var isSelected = i == _selectedIndex;
+            var statusIcon = agent.IsRunning ? "[green]●[/]" : "[red]○[/]";
+            var kindIcon = agent.Kind == AgentKind.Supervisor ? "[yellow]S[/]" : "[cyan]W[/]";
 
-                var name = isSelected
-                    ? $"[bold reverse] {kindIcon} {agent.Name} [/]"
-                    : $" {kindIcon} {agent.Name}";
+            var name = isSelected
+                ? $"[bold reverse] {kindIcon} {agent.Name} [/]"
+                : $" {kindIcon} {agent.Name}";
 
-                table.AddRow(statusIcon, name);
-            }
+            table.AddRow(statusIcon, name);
         }
 
         if (table.Rows.Count == 0)
@@ -326,13 +398,8 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildLogPanel()
     {
-        string? agentId;
-        lock (_lock)
-        {
-            agentId = _selectedAgentId;
-        }
-
-        if (agentId == null)
+        // Called with _lock held
+        if (_selectedAgentId == null)
         {
             return new Panel("[grey]Select an agent to view logs[/]")
                 .Header("[bold]Log Output[/]")
@@ -340,7 +407,7 @@ public sealed class SwarmUI : IDisposable
                 .Expand();
         }
 
-        var agent = _registry.Get(agentId);
+        var agent = _registry.Get(_selectedAgentId);
         if (agent == null)
         {
             return new Panel("[grey]Agent not found[/]")
@@ -349,7 +416,7 @@ public sealed class SwarmUI : IDisposable
                 .Expand();
         }
 
-        var cache = _logCaches.GetValueOrDefault(agentId) ?? new LogCache();
+        var cache = _logCaches.GetValueOrDefault(_selectedAgentId) ?? new LogCache();
         UpdateLogCache(agent.LogPath, cache);
 
         var statusText = agent.IsRunning ? "[green]Running[/]" : "[red]Stopped[/]";
