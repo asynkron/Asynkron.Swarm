@@ -7,10 +7,11 @@ public class CodexCli : AgentCliBase
     public override string FileName => "codex";
     public override bool UseStdin => false;
 
-    public override string BuildArguments(string prompt, string? model = null)
+    public override string BuildArguments(string prompt, string? model = null, string? additionalDir = null)
     {
         var modelArg = model != null ? $"--model {model} " : "";
-        return $"exec \"{EscapeForShell(prompt)}\" --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox {modelArg}".TrimEnd();
+        var addDirArg = additionalDir != null ? $"--add-dir \"{additionalDir}\" " : "";
+        return $"exec \"{EscapeForShell(prompt)}\" --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox {addDirArg}{modelArg}".TrimEnd();
     }
 
     protected override IEnumerable<AgentMessage> Parse(string line)

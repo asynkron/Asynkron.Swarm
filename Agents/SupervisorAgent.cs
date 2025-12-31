@@ -24,6 +24,7 @@ public sealed class SupervisorAgent(
     private string RepoPath { get; } = repoPath;
     private List<string> WorktreePaths { get; } = worktreePaths;
     private List<string> WorkerLogPaths { get; } = workerLogPaths;
+    private string LogDir { get; } = logDir;
     private bool Autopilot { get; } = autopilot;
 
     protected override TimeSpan HeartbeatTimeout => TimeSpan.FromSeconds(90);
@@ -33,7 +34,8 @@ public sealed class SupervisorAgent(
         var prompt = Autopilot
             ? SupervisorPrompt.BuildAutopilot(WorktreePaths, WorkerLogPaths, RestartCount)
             : SupervisorPrompt.Build(WorktreePaths, WorkerLogPaths, RepoPath, RestartCount);
-        var arguments = Cli.BuildArguments(prompt, GetModel());
+        // Supervisor needs access to log directory to read worker logs
+        var arguments = Cli.BuildArguments(prompt, GetModel(), LogDir);
         var stdinContent = Cli.UseStdin ? prompt : null;
 
         return StartProcess(Cli.FileName, arguments, RepoPath, stdinContent);

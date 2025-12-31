@@ -8,10 +8,11 @@ public class ClaudeCli : AgentCliBase
     public override string FileName => "claude";
     public override bool UseStdin => true;
 
-    public override string BuildArguments(string prompt, string? model = null)
+    public override string BuildArguments(string prompt, string? model = null, string? additionalDir = null)
     {
         var modelArg = model != null ? $"--model {model} " : "";
-        return $"-p --dangerously-skip-permissions --tools default --output-format stream-json --verbose {modelArg}".TrimEnd();
+        var addDirArg = additionalDir != null ? $"--add-dir \"{additionalDir}\" " : "";
+        return $"-p --dangerously-skip-permissions --tools default --output-format stream-json --verbose {addDirArg}{modelArg}".TrimEnd();
     }
 
     protected override IEnumerable<AgentMessage> Parse(string line)

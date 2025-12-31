@@ -35,7 +35,8 @@ public sealed class WorkerAgent(
     protected override Process SpawnProcess()
     {
         var prompt = WorkerPrompt.Build(TodoFile, Name, SharedFilePath, RestartCount, Autopilot, BranchName);
-        var arguments = Cli.BuildArguments(prompt, GetModel());
+        var sharedDir = Path.GetDirectoryName(SharedFilePath);
+        var arguments = Cli.BuildArguments(prompt, GetModel(), sharedDir);
         var stdinContent = Cli.UseStdin ? prompt : null;
 
         return StartProcess(Cli.FileName, arguments, WorktreePath, stdinContent);
