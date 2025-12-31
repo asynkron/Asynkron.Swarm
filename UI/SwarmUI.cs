@@ -28,6 +28,9 @@ public class SwarmUI : IDisposable
     private const int RefreshMs = 250;
     private const int MaxStatusMessages = 10;
 
+    // Reusable layout structure
+    private readonly Layout _layout;
+
     private class LogCache
     {
         public long LastPosition { get; set; }
@@ -57,6 +60,20 @@ public class SwarmUI : IDisposable
         _registry.AgentAdded += OnAgentAdded;
         _registry.AgentRemoved += OnAgentRemoved;
         _registry.AgentStopped += OnAgentStopped;
+
+        // Create layout structure once
+        _layout = new Layout("Root")
+            .SplitRows(
+                new Layout("Header").Size(3),
+                new Layout("Main"));
+
+        _layout["Main"].SplitColumns(
+            new Layout("Left").Size(40),
+            new Layout("Log"));
+
+        _layout["Main"]["Left"].SplitRows(
+            new Layout("Agents"),
+            new Layout("Status").Size(14));
     }
 
     private void OnAgentAdded(AgentInfo agent)
@@ -146,19 +163,21 @@ public class SwarmUI : IDisposable
 
         try
         {
+            // Initial update of all regions
+            UpdateLayoutRegions();
+
             // Clear and show initial render
             AnsiConsole.Clear();
-            AnsiConsole.Write(BuildLayout());
 
-            // Main render loop
-            await AnsiConsole.Live(BuildLayout())
+            // Main render loop - reuse same layout, just update regions
+            await AnsiConsole.Live(_layout)
                 .AutoClear(true)
                 .Overflow(VerticalOverflow.Ellipsis)
                 .StartAsync(async ctx =>
                 {
                     while (!token.IsCancellationRequested)
                     {
-                        ctx.UpdateTarget(BuildLayout());
+                        UpdateLayoutRegions();
                         ctx.Refresh();
                         await Task.Delay(RefreshMs, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                     }
@@ -213,27 +232,12 @@ public class SwarmUI : IDisposable
         }
     }
 
-    private Layout BuildLayout()
+    private void UpdateLayoutRegions()
     {
-        var layout = new Layout("Root")
-            .SplitRows(
-                new Layout("Header").Size(3),
-                new Layout("Main"));
-
-        var main = layout["Main"].SplitColumns(
-            new Layout("Left").Size(40),
-            new Layout("Log"));
-
-        main["Left"].SplitRows(
-            new Layout("Agents"),
-            new Layout("Status").Size(14));
-
-        layout["Header"].Update(BuildHeader());
-        main["Agents"].Update(BuildAgentList());
-        main["Status"].Update(BuildStatusPanel());
-        main["Log"].Update(BuildLogPanel());
-
-        return layout;
+        _layout["Header"].Update(BuildHeader());
+        _layout["Main"]["Left"]["Agents"].Update(BuildAgentList());
+        _layout["Main"]["Left"]["Status"].Update(BuildStatusPanel());
+        _layout["Main"]["Log"].Update(BuildLogPanel());
     }
 
     private Panel BuildHeader()
