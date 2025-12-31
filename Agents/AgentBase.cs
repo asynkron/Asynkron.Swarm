@@ -19,7 +19,6 @@ public abstract class AgentBase : IDisposable
     // State
     private Process? Process { get; set; }
     private AgentMessageStream? MessageStream { get; set; }
-    private DateTimeOffset HeartbeatTimestamp { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset StartedAt { get; private set; }
     public bool IsRunning => Process is { HasExited: false };
 
@@ -53,7 +52,6 @@ public abstract class AgentBase : IDisposable
     public event AgentMessageHandler? OnBufferedMessage;
 
     // Abstract - different per subtype
-    protected abstract TimeSpan HeartbeatTimeout { get; }
     protected abstract void HandleMessage(AgentMessage message);
     protected abstract Process SpawnProcess();
 
@@ -79,7 +77,6 @@ public abstract class AgentBase : IDisposable
         Cli.Subscribe(MessageStream);
         MessageStream.Start();
 
-        HeartbeatTimestamp = DateTimeOffset.Now;
         StartedAt = DateTimeOffset.Now;
     }
 
@@ -149,13 +146,6 @@ public abstract class AgentBase : IDisposable
             return true;
         }
 
-        // Restart if heartbeat timeout
-        if (DateTimeOffset.Now > HeartbeatTimestamp.Add(HeartbeatTimeout))
-        {
-            Restart();
-            return true;
-        }
-
         return false;
     }
 
@@ -182,9 +172,6 @@ public abstract class AgentBase : IDisposable
 
     private void OnMessageReceived(AgentMessage msg)
     {
-        // Always update heartbeat on ANY message
-        HeartbeatTimestamp = DateTimeOffset.Now;
-
         // Notify external listeners
         OnMessage?.Invoke(msg);
 

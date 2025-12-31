@@ -11,6 +11,7 @@ namespace Asynkron.Swarm.UI;
 public sealed class SwarmUI : IDisposable
 {
     private readonly AgentRegistry _registry;
+    private readonly bool _autopilot;
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _lock = new();
 
@@ -54,9 +55,10 @@ public sealed class SwarmUI : IDisposable
     private bool _agentsDirty = true;
     private bool _logDirty = true;
 
-    public SwarmUI(AgentRegistry registry)
+    public SwarmUI(AgentRegistry registry, bool autopilot = false)
     {
         _registry = registry;
+        _autopilot = autopilot;
 
         // Initialize with existing agents
         foreach (var agent in _registry.GetAll())
@@ -267,7 +269,7 @@ public sealed class SwarmUI : IDisposable
                 {
                     while (!token.IsCancellationRequested)
                     {
-                        // Tick all agents (heartbeat check, crash detection, auto-restart)
+                        // Tick all agents (crash detection, auto-restart)
                         foreach (var agent in _registry.GetAll())
                         {
                             agent.Tick();
@@ -424,11 +426,18 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildHeader()
     {
-        var roundText = _totalRounds > 0 ? $"Round [#61afef]{_currentRound}[/]/[#5c6370]{_totalRounds}[/]" : "";
-        var timeText = _remainingTime > TimeSpan.Zero ? $"[#e5c07b]{_remainingTime:mm\\:ss}[/] remaining" : "";
-        var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[#5c6370]│[/] {_currentPhase}" : "";
-
-        var content = $"[bold #61afef]SWARM[/] {roundText} {timeText} {phaseText}";
+        string content;
+        if (_autopilot)
+        {
+            content = "[bold #61afef]SWARM[/] [#e5c07b]Autopilot[/]";
+        }
+        else
+        {
+            var roundText = _totalRounds > 0 ? $"Round [#61afef]{_currentRound}[/]/[#5c6370]{_totalRounds}[/]" : "";
+            var timeText = _remainingTime > TimeSpan.Zero ? $"[#e5c07b]{_remainingTime:mm\\:ss}[/] remaining" : "";
+            var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[#5c6370]│[/] {_currentPhase}" : "";
+            content = $"[bold #61afef]SWARM[/] {roundText} {timeText} {phaseText}";
+        }
 
         return new Panel(new Markup(content))
             .Border(BoxBorder.None)

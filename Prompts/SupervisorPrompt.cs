@@ -24,7 +24,7 @@ public static class SupervisorPrompt
             DO NOT WRITE SCRIPTS. Just run shell commands directly one by one.
 
             1. For each worker, run these shell commands directly:
-               - read the <log_file>, check for interesting information, if the worker has a plan, is writing code, is running tests etc, check if there are any passing or failing tests in the logs.
+               - tail -200 <log_file> (ALWAYS use tail, never the Read tool - logs can be huge)
                - git -C <worktree> log --oneline -3
                - git -C <worktree> status --short
             2. After checking all workers:
@@ -79,7 +79,7 @@ public static class SupervisorPrompt
             DO NOT WRITE SCRIPTS. Just run shell commands directly one by one.
 
             1. For each worker, run these shell commands directly:
-               - read the <log_file>, check for interesting information, if the worker has a plan, is writing code, is running tests etc, check if there are any passing or failing tets in the logs.
+               - tail -200 <log_file> (ALWAYS use tail, never the Read tool - logs can be huge)
                - git -C <worktree> log --oneline -3
                - git -C <worktree> status --short
             2. After checking all workers:

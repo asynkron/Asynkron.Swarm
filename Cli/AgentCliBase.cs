@@ -13,7 +13,7 @@ public abstract class AgentCliBase : IDisposable
 
     public event AgentMessageHandler? OnMessage;
 
-    public abstract string BuildArguments(string prompt, string? model = null, string? additionalDir = null);
+    public abstract string BuildArguments(string prompt, string? model = null);
 
     public void Subscribe(AgentMessageStream stream)
     {

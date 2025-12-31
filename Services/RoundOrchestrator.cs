@@ -55,7 +55,7 @@ public class RoundOrchestrator
         var absoluteRepoPath = Path.GetFullPath(options.Repo);
 
         using var cts = new CancellationTokenSource();
-        _ui = new SwarmUI(_registry);
+        _ui = new SwarmUI(_registry, options.Autopilot);
 
         // Start UI immediately
         var uiTask = _ui.RunAsync(cts.Token);
@@ -123,13 +123,6 @@ public class RoundOrchestrator
 
         try
         {
-            // Inject rivals into each worktree's todo
-            _ui.SetPhase("Injecting rivals...");
-            foreach (var worktreePath in worktreePaths)
-            {
-                await TodoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
-            }
-
             // Create shared communication file
             var swarmDir = Path.Combine(repoPath, ".swarm");
             Directory.CreateDirectory(swarmDir);
@@ -244,14 +237,7 @@ public class RoundOrchestrator
 
         try
         {
-            // Step 2: Inject rivals into each worktree's todo
-            _ui.SetPhase("Injecting rivals...");
-            foreach (var worktreePath in worktreePaths)
-            {
-                await TodoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
-            }
-
-            // Step 3: Create shared communication file for this round
+            // Step 2: Create shared communication file for this round
             var swarmDir = Path.Combine(repoPath, ".swarm");
             Directory.CreateDirectory(swarmDir);
             var sharedFilePath = Path.Combine(swarmDir, $"round{round}-shared.md");

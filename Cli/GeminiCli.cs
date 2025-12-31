@@ -8,11 +8,10 @@ public class GeminiCli : AgentCliBase
     public override string FileName => "gemini";
     public override bool UseStdin => false;
 
-    public override string BuildArguments(string prompt, string? model = null, string? additionalDir = null)
+    public override string BuildArguments(string prompt, string? model = null)
     {
         var modelArg = model != null ? $"--model {model} " : "";
-        var includeDirArg = additionalDir != null ? $"--include-directories \"{additionalDir}\" " : "";
-        return $"\"{EscapeForShell(prompt)}\" --yolo --output-format stream-json {includeDirArg}{modelArg}".TrimEnd();
+        return $"\"{EscapeForShell(prompt)}\" --yolo --output-format stream-json {modelArg}".TrimEnd();
     }
 
     protected override IEnumerable<AgentMessage> Parse(string line)

@@ -30,13 +30,10 @@ public sealed class WorkerAgent(
     public bool Autopilot { get; } = autopilot;
     public string? BranchName { get; } = branchName;
 
-    protected override TimeSpan HeartbeatTimeout => TimeSpan.FromSeconds(180);
-
     protected override Process SpawnProcess()
     {
-        var prompt = WorkerPrompt.Build(TodoFile, Name, SharedFilePath, RestartCount, Autopilot, BranchName);
-        var sharedDir = Path.GetDirectoryName(SharedFilePath);
-        var arguments = Cli.BuildArguments(prompt, GetModel(), sharedDir);
+        var prompt = WorkerPrompt.Build(TodoFile, Name, SharedFilePath, RestartCount, Autopilot, BranchName, LogPath);
+        var arguments = Cli.BuildArguments(prompt, GetModel());
         var stdinContent = Cli.UseStdin ? prompt : null;
 
         return StartProcess(Cli.FileName, arguments, WorktreePath, stdinContent);

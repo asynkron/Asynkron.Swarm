@@ -2,9 +2,9 @@ namespace Asynkron.Swarm.Prompts;
 
 public static class WorkerPrompt
 {
-    public static string Build(string todoFile, string agentName, string sharedFilePath, int restartCount = 0, bool autopilot = false, string? branchName = null)
+    public static string Build(string todoFile, string agentName, string sharedFilePath, int restartCount = 0, bool autopilot = false, string? branchName = null, string? logPath = null)
     {
-        var basePrompt = $"read {todoFile} and follow the instructions";
+        var basePrompt = $"run `cat {todoFile}` to read the todo file (use cat/tail, not Read tool - files can be large), then follow the instructions";
 
         var sharedFileInstructions = $"""
 
@@ -52,18 +52,19 @@ public static class WorkerPrompt
             IMPORTANT: You MUST create a GitHub PR before exiting. This is required in autopilot mode.
             """ : "";
 
-        if (restartCount > 0)
+        if (restartCount > 0 && logPath != null)
         {
             return $"""
                 IMPORTANT: You have been restarted (restart #{restartCount}).
 
-                Before continuing, read your previous work:
-                1. Check git log to see what commits you made
-                2. Check git status to see uncommitted changes
-                3. Run the tests to see current state
-                4. Continue from where you left off
+                DO NOT read the todo.md file - you already picked a task before the restart.
+                Instead, recover your previous work:
+
+                1. Run `tail -500 {logPath}` to see what you were doing before the restart
+                2. Check git log to see what commits you made
+                3. Check git status to see uncommitted changes
+                4. Continue EXACTLY where you left off - do not start a new task
                 {sharedFileInstructions}{autopilotInstructions}
-                Original task: {basePrompt}
                 """;
         }
 
