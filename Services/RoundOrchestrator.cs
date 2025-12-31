@@ -145,6 +145,7 @@ public class RoundOrchestrator
             _ui.SetPhase("Workers competing...");
             var timeout = TimeSpan.FromMinutes(options.Minutes);
             var endTime = DateTime.Now.Add(timeout);
+            var lastSupervisorRestart = DateTime.MinValue;
 
             while (DateTime.Now < endTime && !token.IsCancellationRequested)
             {
@@ -156,6 +157,21 @@ public class RoundOrchestrator
                 {
                     _ui.AddStatus("All workers finished early");
                     break;
+                }
+
+                // Check if supervisor died and restart it (with 30s cooldown)
+                if (supervisor.Process.HasExited && DateTime.Now - lastSupervisorRestart > TimeSpan.FromSeconds(30))
+                {
+                    _ui.AddStatus("[yellow]Supervisor died, restarting...[/]");
+                    _agentService.RemoveAgent(supervisor);
+                    supervisor = _agentService.StartSupervisor(
+                        round,
+                        worktreePaths,
+                        workerLogPaths,
+                        repoPath,
+                        options.AgentType);
+                    _ui.AddStatus("Restarted Supervisor");
+                    lastSupervisorRestart = DateTime.Now;
                 }
 
                 await Task.Delay(250, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);

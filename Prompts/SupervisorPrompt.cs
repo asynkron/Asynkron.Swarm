@@ -15,11 +15,19 @@ public static class SupervisorPrompt
             ## Your Tasks
 
             ### Phase 1: Monitor (while workers are running)
-            Continuously monitor the worker log files in a loop:
+            Monitor the worker log files in a loop:
             1. Tail each log file to check progress
-            2. Report interesting updates (what each worker is working on)
-            3. Wait 30 seconds
+            2. Report interesting updates and summaries* (what each worker is working on)
+            3. Wait 20 seconds
             4. REPEAT steps 1-3 until you see <<worker has been stopped>> in ALL logs
+            
+            #### Summaries*
+            Provide summaries on progress about the agents in table format.
+            Agent3. Running tests to verify fix for issue #17: 10 passing tests, 2 failing
+            Agent1. Researching, no code changes yet.
+            Agent2. Made code changes to fix issue #42.
+            
+            
 
             DO NOT proceed to Phase 2 until you see <<worker has been stopped>> in the logs.
 
