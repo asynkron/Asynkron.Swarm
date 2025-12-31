@@ -406,8 +406,8 @@ public class SwarmUI : IDisposable
                 cache.Lines.RemoveAt(0);
             }
 
-            // Escape markup characters and strip ANSI codes
-            var cleanLines = cache.Lines.Select(StripAnsiAndEscape).ToList();
+            // Strip ANSI codes (Text class handles display without markup interpretation)
+            var cleanLines = cache.Lines.Select(StripAnsiCodes).ToList();
             cache.CachedContent = cleanLines.Count > 0
                 ? string.Join(Environment.NewLine, cleanLines)
                 : "[Empty log file]";
@@ -418,16 +418,13 @@ public class SwarmUI : IDisposable
         }
     }
 
-    private static string StripAnsiAndEscape(string input)
+    private static string StripAnsiCodes(string input)
     {
-        // Strip ANSI escape codes
-        var stripped = System.Text.RegularExpressions.Regex.Replace(
+        // Strip ANSI escape codes (colors, cursor movement, etc.)
+        return System.Text.RegularExpressions.Regex.Replace(
             input,
             @"\x1B\[[0-9;]*[A-Za-z]",
             "");
-
-        // Escape Spectre markup characters
-        return Markup.Escape(stripped);
     }
 
     public void Stop()
