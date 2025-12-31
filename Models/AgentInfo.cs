@@ -33,6 +33,7 @@ public record AgentInfo
     public List<string>? WorktreePaths { get; init; }  // For supervisor
     public List<string>? WorkerLogPaths { get; init; } // For supervisor
     public string? RepoPath { get; init; }             // For supervisor
+    public string? SharedFilePath { get; init; }       // For worker inter-communication
     public int RestartCount { get; init; }
 
     public bool IsRunning => !Process.HasExited;

@@ -14,11 +14,17 @@ public class SwarmSettings : CommandSettings
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "git", "asynkron", "Asynkron.JsEngine");
 
-    [CommandOption("-a|--agents <COUNT>")]
-    [Description("Number of worker agents to spawn")]
-    [DefaultValue(4)]
+    [CommandOption("--claude <COUNT>")]
+    [Description("Number of Claude worker agents")]
+    [DefaultValue(3)]
     [UsedImplicitly]
-    public int Agents { get; init; } = 4;
+    public int ClaudeWorkers { get; init; } = 3;
+
+    [CommandOption("--codex <COUNT>")]
+    [Description("Number of Codex worker agents")]
+    [DefaultValue(3)]
+    [UsedImplicitly]
+    public int CodexWorkers { get; init; } = 3;
 
     [CommandOption("-r|--repo <PATH>")]
     [Description("Path to the git repository")]
@@ -37,11 +43,11 @@ public class SwarmSettings : CommandSettings
     [UsedImplicitly]
     public int Minutes { get; init; } = 15;
 
-    [CommandOption("--agent-type <TYPE>")]
-    [Description("Agent CLI to use: Claude or Codex")]
+    [CommandOption("--supervisor <TYPE>")]
+    [Description("Supervisor agent type: Claude or Codex")]
     [DefaultValue(AgentType.Claude)]
     [UsedImplicitly]
-    public AgentType AgentType { get; init; } = AgentType.Claude;
+    public AgentType SupervisorType { get; init; } = AgentType.Claude;
 
     [CommandOption("--max-rounds <COUNT>")]
     [Description("Maximum number of rounds before stopping")]
@@ -51,9 +57,19 @@ public class SwarmSettings : CommandSettings
 
     public override ValidationResult Validate()
     {
-        if (Agents < 1)
+        if (ClaudeWorkers < 0)
         {
-            return ValidationResult.Error("Number of agents must be at least 1");
+            return ValidationResult.Error("Claude workers cannot be negative");
+        }
+
+        if (CodexWorkers < 0)
+        {
+            return ValidationResult.Error("Codex workers cannot be negative");
+        }
+
+        if (ClaudeWorkers + CodexWorkers < 1)
+        {
+            return ValidationResult.Error("Total workers must be at least 1");
         }
 
         if (Minutes < 1)
@@ -119,11 +135,12 @@ public class SwarmCommand : AsyncCommand<SwarmSettings>
         {
             var options = new SwarmOptions
             {
-                Agents = settings.Agents,
+                ClaudeWorkers = settings.ClaudeWorkers,
+                CodexWorkers = settings.CodexWorkers,
                 Repo = settings.Repo,
                 Todo = settings.Todo,
                 Minutes = settings.Minutes,
-                AgentType = settings.AgentType,
+                SupervisorType = settings.SupervisorType,
                 MaxRounds = settings.MaxRounds
             };
 

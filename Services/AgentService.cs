@@ -16,12 +16,12 @@ public class AgentService
         Directory.CreateDirectory(_logDir);
     }
 
-    public AgentInfo StartWorker(int round, int agentNumber, string worktreePath, string todoFile, AgentType agentType, int restartCount = 0)
+    public AgentInfo StartWorker(int round, int agentNumber, string worktreePath, string todoFile, string sharedFilePath, AgentType agentType, int restartCount = 0)
     {
         var agentId = $"round{round}-worker{agentNumber}";
         var agentName = $"Worker {agentNumber}";
         var logFilePath = Path.Combine(_logDir, $"{agentId}.log");
-        var prompt = WorkerPrompt.Build(todoFile, restartCount);
+        var prompt = WorkerPrompt.Build(todoFile, agentName, sharedFilePath, restartCount);
 
         // Use gpt-5.2-codex for workers
         var model = agentType == AgentType.Codex ? "gpt-5.2-codex" : null;
@@ -42,6 +42,7 @@ public class AgentService
             AgentNumber = agentNumber,
             TodoFile = todoFile,
             AgentType = agentType,
+            SharedFilePath = sharedFilePath,
             RestartCount = restartCount
         };
 
@@ -114,6 +115,7 @@ public class AgentService
                 agent.AgentNumber,
                 agent.WorktreePath!,
                 agent.TodoFile!,
+                agent.SharedFilePath!,
                 agent.AgentType,
                 newRestartCount);
         }

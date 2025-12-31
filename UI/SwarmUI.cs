@@ -437,7 +437,10 @@ public sealed class SwarmUI : IDisposable
 
     private bool CheckLivenessChanged()
     {
-        // Check if any agent has received new log lines
+        // Check if any agent has received new log lines AND update heartbeats
+        // IMPORTANT: We must update _lastLineCount HERE to avoid race conditions
+        // where BuildAgentList updates it separately and heartbeat gets missed
+        var changed = false;
         foreach (var agentId in _agentIds)
         {
             var tailer = _tailers.GetValueOrDefault(agentId);
@@ -447,9 +450,16 @@ public sealed class SwarmUI : IDisposable
             var lastCount = _lastLineCount.GetValueOrDefault(agentId, 0);
 
             if (currentCount != lastCount)
-                return true;
+            {
+                // Atomically update stored count, heartbeat, AND spinner
+                _lastLineCount[agentId] = currentCount;
+                _lastHeartbeat[agentId] = DateTime.Now;
+                var frame = _spinnerFrame.GetValueOrDefault(agentId, 0);
+                _spinnerFrame[agentId] = (frame + 1) % SpinnerFrames.Length;
+                changed = true;
+            }
         }
-        return false;
+        return changed;
     }
 
     private Panel BuildHeader()
@@ -494,20 +504,7 @@ public sealed class SwarmUI : IDisposable
             var agent = _registry.Get(agentId);
             if (agent == null) continue;
 
-            // Check liveness - advance spinner if line count changed
-            var tailer = _tailers.GetValueOrDefault(agentId);
-            var currentCount = tailer?.TotalLineCount ?? 0;
-            var lastCount = _lastLineCount.GetValueOrDefault(agentId, 0);
-
-            if (currentCount != lastCount)
-            {
-                _lastLineCount[agentId] = currentCount;
-                _lastHeartbeat[agentId] = DateTime.Now;
-                var frame = _spinnerFrame.GetValueOrDefault(agentId, 0);
-                _spinnerFrame[agentId] = (frame + 1) % SpinnerFrames.Length;
-            }
-
-            // Use spinner as status icon when running, red circle when stopped
+            // Spinner frame and heartbeat are updated in CheckLivenessChanged()
             var statusIcon = agent.IsRunning
                 ? $"[#98c379]{SpinnerFrames[_spinnerFrame.GetValueOrDefault(agentId, 0)]}[/]"
                 : "[#e06c75]○[/]";

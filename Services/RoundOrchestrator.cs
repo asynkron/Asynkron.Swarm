@@ -64,7 +64,8 @@ public class RoundOrchestrator
 
         _ui.SetRound(0, options.MaxRounds);
         _ui.AddStatus($"Repository: {absoluteRepoPath}");
-        _ui.AddStatus($"Agents: {options.Agents} x {options.AgentType}");
+        _ui.AddStatus($"Workers: {options.ClaudeWorkers} Claude + {options.CodexWorkers} Codex");
+        _ui.AddStatus($"Supervisor: {options.SupervisorType}");
         _ui.AddStatus($"Time per round: {options.Minutes} min");
 
         try
@@ -103,7 +104,7 @@ public class RoundOrchestrator
         _ui.SetPhase("Creating worktrees...");
 
         // Step 1: Create worktrees
-        var worktreePaths = await _worktreeService.CreateWorktreesAsync(repoPath, round, options.Agents);
+        var worktreePaths = await _worktreeService.CreateWorktreesAsync(repoPath, round, options.TotalWorkers);
         _currentWorktreePaths = worktreePaths;
 
         try
@@ -115,22 +116,31 @@ public class RoundOrchestrator
                 await TodoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
             }
 
-            // Step 3: Start worker agents
+            // Step 3: Create shared communication file for this round
+            var swarmDir = Path.Combine(repoPath, ".swarm");
+            Directory.CreateDirectory(swarmDir);
+            var sharedFilePath = Path.Combine(swarmDir, $"round{round}-shared.md");
+            await File.WriteAllTextAsync(sharedFilePath, $"# Shared Agent Communication - Round {round}\n\nAgents should document all their key findings below.\n\n---\n\n", token);
+            _ui.AddStatus($"Shared file: {sharedFilePath}");
+
+            // Step 4: Start worker agents (Claude first, then Codex)
             _ui.SetPhase("Starting workers...");
             var workers = new List<AgentInfo>();
             for (var i = 0; i < worktreePaths.Count; i++)
             {
+                var agentType = i < options.ClaudeWorkers ? AgentType.Claude : AgentType.Codex;
                 var worker = _agentService.StartWorker(
                     round,
                     i + 1,
                     worktreePaths[i],
                     options.Todo,
-                    options.AgentType);
+                    sharedFilePath,
+                    agentType);
                 workers.Add(worker);
-                _ui.AddStatus($"Started {worker.Name}");
+                _ui.AddStatus($"Started {worker.Name} ({agentType})");
             }
 
-            // Step 4: Start supervisor agent
+            // Step 5: Start supervisor agent
             _ui.SetPhase("Starting supervisor...");
             var workerLogPaths = workers.Select(w => w.LogPath).ToList();
             var supervisor = _agentService.StartSupervisor(
@@ -138,10 +148,10 @@ public class RoundOrchestrator
                 worktreePaths,
                 workerLogPaths,
                 repoPath,
-                options.AgentType);
-            _ui.AddStatus("Started Supervisor");
+                options.SupervisorType);
+            _ui.AddStatus($"Started Supervisor ({options.SupervisorType})");
 
-            // Step 5: Wait for timeout with countdown
+            // Step 6: Wait for timeout with countdown
             _ui.SetPhase("Workers competing...");
             var timeout = TimeSpan.FromMinutes(options.Minutes);
             var endTime = DateTime.Now.Add(timeout);
@@ -169,7 +179,7 @@ public class RoundOrchestrator
                         worktreePaths,
                         workerLogPaths,
                         repoPath,
-                        options.AgentType);
+                        options.SupervisorType);
                     _ui.AddStatus("Restarted Supervisor");
                     lastSupervisorRestart = DateTime.Now;
                 }
@@ -177,7 +187,7 @@ public class RoundOrchestrator
                 await Task.Delay(250, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
-            // Step 6: Kill all workers and append stopped marker
+            // Step 7: Kill all workers and append stopped marker
             _ui.SetPhase("Stopping workers...");
             _ui.SetRemainingTime(TimeSpan.Zero);
             await _agentService.KillAllWorkersAsync();
@@ -188,7 +198,7 @@ public class RoundOrchestrator
                 _agentService.RemoveAgent(worker);
             }
 
-            // Step 7-10: Wait for supervisor to complete its work
+            // Step 8: Wait for supervisor to complete its work
             _ui.SetPhase("Supervisor evaluating...");
             var supervisorTimeout = TimeSpan.FromMinutes(10);
             var supervisorComplete = await WaitForAgentAsync(supervisor, supervisorTimeout);
@@ -203,7 +213,7 @@ public class RoundOrchestrator
                 _ui.AddStatus("Supervisor completed");
             }
 
-            // Step 11: Cleanup
+            // Step 9: Cleanup
             _ui.SetPhase("Cleaning up...");
             _agentService.RemoveAgent(supervisor);
             await WorktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);

@@ -520,8 +520,8 @@ public sealed partial class AsyncFileTailer : IDisposable
         // Bold: **text** → bold
         result = BoldRegex().Replace(result, "[bold]$1[/]");
 
-        // Code: `text` → orange
-        result = CodeRegex().Replace(result, "[#d19a66]$1[/]");
+        // Code: `text` → purple (matches supervisor color)
+        result = CodeRegex().Replace(result, "[#c678dd]$1[/]");
 
         return result;
     }
