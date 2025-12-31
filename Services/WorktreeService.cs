@@ -18,9 +18,6 @@ public class WorktreeService
         var worktrees = new List<string>();
         var absoluteRepoPath = Path.GetFullPath(repoPath);
 
-        // Get current branch name
-        var branchName = await GetCurrentBranchAsync(absoluteRepoPath);
-
         for (var i = 1; i <= count; i++)
         {
             var worktreeName = $"round{round}-agent{i}";
@@ -34,7 +31,8 @@ public class WorktreeService
 
             AnsiConsole.MarkupLine($"[grey]Creating worktree: {worktreeName}[/]");
 
-            var result = await RunGitAsync(absoluteRepoPath, $"worktree add \"{worktreePath}\" {branchName}");
+            // Create worktree with detached HEAD at current commit
+            var result = await RunGitAsync(absoluteRepoPath, $"worktree add --detach \"{worktreePath}\" HEAD");
             if (result.ExitCode != 0)
             {
                 throw new InvalidOperationException($"Failed to create worktree: {result.Error}");
@@ -70,16 +68,6 @@ public class WorktreeService
         {
             Directory.Delete(worktreePath, recursive: true);
         }
-    }
-
-    private async Task<string> GetCurrentBranchAsync(string repoPath)
-    {
-        var result = await RunGitAsync(repoPath, "rev-parse --abbrev-ref HEAD");
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Failed to get current branch: {result.Error}");
-        }
-        return result.Output.Trim();
     }
 
     private static async Task<(int ExitCode, string Output, string Error)> RunGitAsync(string workingDir, string arguments)
