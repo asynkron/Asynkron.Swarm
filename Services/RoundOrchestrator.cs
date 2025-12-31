@@ -1,6 +1,5 @@
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.UI;
-using Spectre.Console;
 
 namespace Asynkron.Swarm.Services;
 
@@ -10,6 +9,9 @@ public class RoundOrchestrator
     private readonly WorktreeService _worktreeService;
     private readonly TodoService _todoService;
     private readonly AgentService _agentService;
+    private List<string> _currentWorktreePaths = [];
+    private string? _currentRepoPath;
+    private SwarmUI? _ui;
 
     public RoundOrchestrator()
     {
@@ -19,57 +21,102 @@ public class RoundOrchestrator
         _agentService = new AgentService(_registry);
     }
 
+    public void KillAllAgents()
+    {
+        _ui?.AddStatus("[red]Killing all agents...[/]");
+        foreach (var agent in _registry.GetAll())
+        {
+            try
+            {
+                if (!agent.Process.HasExited)
+                {
+                    agent.Process.Kill(entireProcessTree: true);
+                    _ui?.AddStatus($"Killed {agent.Name}");
+                }
+            }
+            catch
+            {
+                // Ignore errors during cleanup
+            }
+        }
+        _registry.Clear();
+    }
+
+    public async Task CleanupWorktreesAsync()
+    {
+        if (_currentRepoPath != null && _currentWorktreePaths.Count > 0)
+        {
+            _ui?.AddStatus("Cleaning up worktrees...");
+            await _worktreeService.DeleteWorktreesAsync(_currentRepoPath, _currentWorktreePaths);
+            _currentWorktreePaths.Clear();
+        }
+    }
+
     public async Task RunAsync(SwarmOptions options)
     {
         var absoluteRepoPath = Path.GetFullPath(options.Repo);
 
-        // Show initial info
-        AnsiConsole.Write(new FigletText("Swarm").Color(Color.Cyan1));
-        AnsiConsole.MarkupLine($"[bold]Repository:[/] {absoluteRepoPath}");
-        AnsiConsole.MarkupLine($"[bold]Agents:[/] {options.Agents}");
-        AnsiConsole.MarkupLine($"[bold]Agent Type:[/] {options.AgentType}");
-        AnsiConsole.MarkupLine($"[bold]Time per round:[/] {options.Minutes} minutes");
-        AnsiConsole.MarkupLine($"[bold]Max rounds:[/] {options.MaxRounds}");
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[grey]Starting in 2 seconds...[/]");
-        await Task.Delay(2000);
+        using var cts = new CancellationTokenSource();
+        _ui = new SwarmUI(_registry);
 
-        for (var round = 1; round <= options.MaxRounds; round++)
+        // Start UI immediately
+        var uiTask = _ui.RunAsync(cts.Token);
+
+        _ui.SetRound(0, options.MaxRounds);
+        _ui.AddStatus($"Repository: {absoluteRepoPath}");
+        _ui.AddStatus($"Agents: {options.Agents} x {options.AgentType}");
+        _ui.AddStatus($"Time per round: {options.Minutes} min");
+
+        try
         {
-            // Check if there are remaining items in todo
-            var hasItems = await _todoService.HasRemainingItemsAsync(absoluteRepoPath, options.Todo);
-            if (!hasItems)
+            for (var round = 1; round <= options.MaxRounds; round++)
             {
-                AnsiConsole.MarkupLine("[green]All todo items completed! Swarm finished.[/]");
-                break;
+                // Check if there are remaining items in todo
+                var hasItems = await _todoService.HasRemainingItemsAsync(absoluteRepoPath, options.Todo);
+                if (!hasItems)
+                {
+                    _ui.AddStatus("[green]All todo items completed![/]");
+                    break;
+                }
+
+                await RunRoundAsync(options, absoluteRepoPath, round, cts.Token);
             }
 
-            await RunRoundAsync(options, absoluteRepoPath, round);
+            _ui.AddStatus("[bold green]Swarm orchestration complete.[/]");
+            await Task.Delay(2000, cts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
-
-        AnsiConsole.MarkupLine("[bold green]Swarm orchestration complete.[/]");
+        finally
+        {
+            cts.Cancel();
+            await uiTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            _ui.Dispose();
+        }
     }
 
-    private async Task RunRoundAsync(SwarmOptions options, string repoPath, int round)
+    private async Task RunRoundAsync(SwarmOptions options, string repoPath, int round, CancellationToken token)
     {
         // Clear registry for new round
         _agentService.RemoveAllAgents();
+        _currentRepoPath = repoPath;
 
-        AnsiConsole.Clear();
-        AnsiConsole.Write(new Rule($"[yellow]Round {round}[/]").RuleStyle("grey"));
+        _ui!.SetRound(round, options.MaxRounds);
+        _ui.SetPhase("Creating worktrees...");
 
         // Step 1: Create worktrees
         var worktreePaths = await _worktreeService.CreateWorktreesAsync(repoPath, round, options.Agents);
+        _currentWorktreePaths = worktreePaths;
 
         try
         {
             // Step 2: Inject rivals into each worktree's todo
+            _ui.SetPhase("Injecting rivals...");
             foreach (var worktreePath in worktreePaths)
             {
                 await _todoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
             }
 
             // Step 3: Start worker agents
+            _ui.SetPhase("Starting workers...");
             var workers = new List<AgentInfo>();
             for (var i = 0; i < worktreePaths.Count; i++)
             {
@@ -80,9 +127,11 @@ public class RoundOrchestrator
                     options.Todo,
                     options.AgentType);
                 workers.Add(worker);
+                _ui.AddStatus($"Started {worker.Name}");
             }
 
             // Step 4: Start supervisor agent
+            _ui.SetPhase("Starting supervisor...");
             var workerLogPaths = workers.Select(w => w.LogPath).ToList();
             var supervisor = _agentService.StartSupervisor(
                 round,
@@ -90,25 +139,31 @@ public class RoundOrchestrator
                 workerLogPaths,
                 repoPath,
                 options.AgentType);
+            _ui.AddStatus("Started Supervisor");
 
-            // Step 5: Run the UI and wait for timeout
-            using var cts = new CancellationTokenSource();
-            using var ui = new SwarmUI(_registry);
-
-            // Start UI in background
-            var uiTask = ui.RunAsync(cts.Token);
-
-            // Wait for the specified time
+            // Step 5: Wait for timeout with countdown
+            _ui.SetPhase("Workers competing...");
             var timeout = TimeSpan.FromMinutes(options.Minutes);
-            var timeoutTask = Task.Delay(timeout, cts.Token);
+            var endTime = DateTime.Now.Add(timeout);
 
-            // Also monitor if all workers finish early
-            var monitorTask = MonitorWorkersAsync(workers, cts.Token);
+            while (DateTime.Now < endTime && !token.IsCancellationRequested)
+            {
+                var remaining = endTime - DateTime.Now;
+                _ui.SetRemainingTime(remaining);
 
-            // Wait for either timeout or all workers done
-            await Task.WhenAny(timeoutTask, monitorTask);
+                // Check if all workers finished early
+                if (workers.All(w => w.Process.HasExited))
+                {
+                    _ui.AddStatus("All workers finished early");
+                    break;
+                }
+
+                await Task.Delay(250, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
 
             // Step 6: Kill all workers and append stopped marker
+            _ui.SetPhase("Stopping workers...");
+            _ui.SetRemainingTime(TimeSpan.Zero);
             await _agentService.KillAllWorkersAsync();
 
             // Remove dead workers from UI
@@ -118,48 +173,36 @@ public class RoundOrchestrator
             }
 
             // Step 7-10: Wait for supervisor to complete its work
-            // Give supervisor time to evaluate (max 10 minutes)
+            _ui.SetPhase("Supervisor evaluating...");
             var supervisorTimeout = TimeSpan.FromMinutes(10);
             var supervisorComplete = await WaitForAgentAsync(supervisor, supervisorTimeout);
 
             if (!supervisorComplete)
             {
+                _ui.AddStatus("Supervisor timed out");
                 _agentService.KillAgent(supervisor);
             }
-
-            // Stop the UI
-            cts.Cancel();
-            await uiTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            else
+            {
+                _ui.AddStatus("Supervisor completed");
+            }
 
             // Step 11: Cleanup
+            _ui.SetPhase("Cleaning up...");
             _agentService.RemoveAgent(supervisor);
             await _worktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
+            _currentWorktreePaths.Clear();
 
-            AnsiConsole.Clear();
-            AnsiConsole.MarkupLine($"[green]Round {round} complete.[/]");
-            await Task.Delay(1000);
+            _ui.AddStatus($"[green]Round {round} complete[/]");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error in round {round}: {ex.Message}[/]");
+            _ui.AddStatus($"[red]Error: {ex.Message}[/]");
 
             // Cleanup on error
             _agentService.RemoveAllAgents();
             await _worktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
             throw;
-        }
-    }
-
-    private static async Task MonitorWorkersAsync(List<AgentInfo> workers, CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            var allDone = workers.All(w => w.Process.HasExited);
-            if (allDone)
-            {
-                return;
-            }
-            await Task.Delay(1000, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 

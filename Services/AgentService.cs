@@ -119,8 +119,8 @@ public class AgentService
     {
         return agentType switch
         {
-            AgentType.Claude => ("claude", $"--print \"{EscapeForShell(prompt)}\""),
-            AgentType.Codex => ("codex", $"exec \"{EscapeForShell(prompt)}\" --skip-git-repo-check"),
+            AgentType.Claude => ("claude", $"-p --dangerously-skip-permissions \"{EscapeForShell(prompt)}\""),
+            AgentType.Codex => ("codex", $"exec \"{EscapeForShell(prompt)}\" --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"),
             _ => throw new ArgumentOutOfRangeException(nameof(agentType))
         };
     }
@@ -176,7 +176,7 @@ public class AgentService
                 {
                     try
                     {
-                        File.AppendAllText(logFilePath, $"[ERROR] {e.Data}" + Environment.NewLine);
+                        File.AppendAllText(logFilePath, e.Data + Environment.NewLine);
                     }
                     catch
                     {

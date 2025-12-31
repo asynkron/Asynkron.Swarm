@@ -1,4 +1,3 @@
-using System.Text;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.Services;
 using Spectre.Console;
@@ -14,14 +13,46 @@ public class SwarmUI : IDisposable
     private int _selectedIndex;
     private string? _selectedAgentId;
     private readonly List<string> _agentIds = [];
-    private readonly Dictionary<string, long> _logPositions = new();
+
+    // Cache log content per agent
+    private readonly Dictionary<string, LogCache> _logCaches = new();
+
+    // Status messages
+    private readonly List<string> _statusMessages = [];
+    private string _currentPhase = "";
+    private int _currentRound;
+    private int _totalRounds;
+    private TimeSpan _remainingTime;
 
     private const int LogTailLines = 50;
-    private const int RefreshMs = 500;
+    private const int RefreshMs = 250;
+    private const int MaxStatusMessages = 10;
+
+    private class LogCache
+    {
+        public long LastPosition { get; set; }
+        public long LastSize { get; set; }
+        public List<string> Lines { get; } = new(LogTailLines + 10);
+        public string CachedContent { get; set; } = "";
+        public int TotalLineCount { get; set; }
+    }
 
     public SwarmUI(AgentRegistry registry)
     {
         _registry = registry;
+
+        // Initialize with existing agents
+        foreach (var agent in _registry.GetAll())
+        {
+            _agentIds.Add(agent.Id);
+            _logCaches[agent.Id] = new LogCache();
+        }
+
+        if (_agentIds.Count > 0)
+        {
+            _selectedAgentId = _agentIds[0];
+            _selectedIndex = 0;
+        }
 
         _registry.AgentAdded += OnAgentAdded;
         _registry.AgentRemoved += OnAgentRemoved;
@@ -33,7 +64,7 @@ public class SwarmUI : IDisposable
         lock (_lock)
         {
             _agentIds.Add(agent.Id);
-            _logPositions[agent.Id] = 0;
+            _logCaches[agent.Id] = new LogCache();
 
             if (_selectedAgentId == null)
             {
@@ -51,7 +82,7 @@ public class SwarmUI : IDisposable
             if (index >= 0)
             {
                 _agentIds.RemoveAt(index);
-                _logPositions.Remove(agent.Id);
+                _logCaches.Remove(agent.Id);
 
                 if (_selectedAgentId == agent.Id)
                 {
@@ -65,6 +96,44 @@ public class SwarmUI : IDisposable
     private void OnAgentStopped(AgentInfo agent)
     {
         // Agent stopped but not removed yet - UI will show it as stopped
+    }
+
+    public void SetRound(int round, int total)
+    {
+        lock (_lock)
+        {
+            _currentRound = round;
+            _totalRounds = total;
+        }
+    }
+
+    public void SetPhase(string phase)
+    {
+        lock (_lock)
+        {
+            _currentPhase = phase;
+            AddStatus(phase);
+        }
+    }
+
+    public void SetRemainingTime(TimeSpan remaining)
+    {
+        lock (_lock)
+        {
+            _remainingTime = remaining;
+        }
+    }
+
+    public void AddStatus(string message)
+    {
+        lock (_lock)
+        {
+            _statusMessages.Add($"[grey]{DateTime.Now:HH:mm:ss}[/] {message}");
+            while (_statusMessages.Count > MaxStatusMessages)
+            {
+                _statusMessages.RemoveAt(0);
+            }
+        }
     }
 
     public async Task RunAsync(CancellationToken externalToken)
@@ -135,14 +204,63 @@ public class SwarmUI : IDisposable
     private Layout BuildLayout()
     {
         var layout = new Layout("Root")
-            .SplitColumns(
-                new Layout("Agents").Size(35),
-                new Layout("Log"));
+            .SplitRows(
+                new Layout("Header").Size(3),
+                new Layout("Main").SplitColumns(
+                    new Layout("Left").Size(40).SplitRows(
+                        new Layout("Agents"),
+                        new Layout("Status").Size(12)),
+                    new Layout("Log")));
 
+        layout["Header"].Update(BuildHeader());
         layout["Agents"].Update(BuildAgentList());
+        layout["Status"].Update(BuildStatusPanel());
         layout["Log"].Update(BuildLogPanel());
 
         return layout;
+    }
+
+    private Panel BuildHeader()
+    {
+        int round, total;
+        string phase;
+        TimeSpan remaining;
+
+        lock (_lock)
+        {
+            round = _currentRound;
+            total = _totalRounds;
+            phase = _currentPhase;
+            remaining = _remainingTime;
+        }
+
+        var roundText = total > 0 ? $"Round [cyan]{round}[/]/[grey]{total}[/]" : "";
+        var timeText = remaining > TimeSpan.Zero ? $"[yellow]{remaining:mm\\:ss}[/] remaining" : "";
+        var phaseText = !string.IsNullOrEmpty(phase) ? $"[grey]│[/] {phase}" : "";
+
+        var content = $"[bold cyan]SWARM[/] {roundText} {timeText} {phaseText}";
+
+        return new Panel(new Markup(content))
+            .Border(BoxBorder.None)
+            .Expand();
+    }
+
+    private Panel BuildStatusPanel()
+    {
+        List<string> messages;
+        lock (_lock)
+        {
+            messages = _statusMessages.ToList();
+        }
+
+        var content = messages.Count > 0
+            ? string.Join("\n", messages)
+            : "[grey]No status messages[/]";
+
+        return new Panel(new Markup(content))
+            .Header("[bold]Status[/]")
+            .BorderColor(Color.Grey)
+            .Expand();
     }
 
     private Panel BuildAgentList()
@@ -209,43 +327,76 @@ public class SwarmUI : IDisposable
                 .Expand();
         }
 
-        var logContent = ReadLogTail(agent.LogPath, LogTailLines);
-        var statusText = agent.IsRunning ? "[green]Running[/]" : "[red]Stopped[/]";
-        var headerText = $"[bold]{agent.Name}[/] - {statusText} - [grey]{agent.Runtime}[/]";
+        var cache = _logCaches.GetValueOrDefault(agentId) ?? new LogCache();
+        UpdateLogCache(agent.LogPath, cache);
 
-        return new Panel(new Text(logContent))
+        var statusText = agent.IsRunning ? "[green]Running[/]" : "[red]Stopped[/]";
+        var timeStamp = DateTime.Now.ToString("HH:mm:ss");
+        var headerText = $"[bold]{agent.Name}[/] - {statusText} - [grey]{agent.Runtime}[/] - [grey]{timeStamp} ({cache.TotalLineCount} lines)[/]";
+
+        return new Panel(new Text(cache.CachedContent))
             .Header(headerText)
             .BorderColor(agent.IsRunning ? Color.Green : Color.Red)
             .Expand();
     }
 
-    private static string ReadLogTail(string logPath, int lines)
+    private void UpdateLogCache(string logPath, LogCache cache)
     {
         try
         {
             if (!File.Exists(logPath))
             {
-                return "[Waiting for log file...]";
+                cache.CachedContent = "[Waiting for log file...]";
+                return;
             }
 
-            // Read file with shared access
+            var fileInfo = new FileInfo(logPath);
+
+            // Only re-read if file has changed
+            if (fileInfo.Length == cache.LastSize)
+            {
+                return; // No changes, use cached content
+            }
+
+            // File grew - read new content
             using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+            if (fileInfo.Length > cache.LastSize && cache.LastPosition > 0)
+            {
+                // Incremental read - seek to last position
+                fs.Seek(cache.LastPosition, SeekOrigin.Begin);
+            }
+
             using var reader = new StreamReader(fs);
 
-            var allLines = new List<string>();
-            while (reader.ReadLine() is { } line)
+            if (cache.LastPosition == 0)
             {
-                allLines.Add(line);
+                // First read - read all
+                cache.Lines.Clear();
             }
 
-            var tailLines = allLines.TakeLast(lines).ToList();
-            return tailLines.Count > 0
-                ? string.Join(Environment.NewLine, tailLines)
+            while (reader.ReadLine() is { } line)
+            {
+                cache.Lines.Add(line);
+                cache.TotalLineCount++;
+            }
+
+            cache.LastPosition = fs.Position;
+            cache.LastSize = fileInfo.Length;
+
+            // Keep only last N lines
+            while (cache.Lines.Count > LogTailLines)
+            {
+                cache.Lines.RemoveAt(0);
+            }
+
+            cache.CachedContent = cache.Lines.Count > 0
+                ? string.Join(Environment.NewLine, cache.Lines)
                 : "[Empty log file]";
         }
         catch (Exception ex)
         {
-            return $"[Error reading log: {ex.Message}]";
+            cache.CachedContent = $"[Error reading log: {ex.Message}]";
         }
     }
 

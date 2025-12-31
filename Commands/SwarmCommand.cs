@@ -89,6 +89,23 @@ public class SwarmCommand : AsyncCommand<SwarmSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, SwarmSettings settings)
     {
+        var orchestrator = new RoundOrchestrator();
+
+        // Handle Ctrl+C gracefully
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true; // Prevent immediate termination
+            orchestrator.KillAllAgents();
+            orchestrator.CleanupWorktreesAsync().GetAwaiter().GetResult();
+            Environment.Exit(0);
+        };
+
+        // Also handle process exit
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            orchestrator.KillAllAgents();
+        };
+
         try
         {
             var options = new SwarmOptions
@@ -101,14 +118,16 @@ public class SwarmCommand : AsyncCommand<SwarmSettings>
                 MaxRounds = settings.MaxRounds
             };
 
-            var orchestrator = new RoundOrchestrator();
             await orchestrator.RunAsync(options);
 
             return 0;
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
+            orchestrator.KillAllAgents();
+            await orchestrator.CleanupWorktreesAsync();
+            // Print error after cleanup (UI is stopped by now)
+            Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }
     }

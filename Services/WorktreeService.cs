@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Spectre.Console;
 
 namespace Asynkron.Swarm.Services;
 
@@ -29,8 +28,6 @@ public class WorktreeService
                 await RemoveWorktreeAsync(absoluteRepoPath, worktreePath);
             }
 
-            AnsiConsole.MarkupLine($"[grey]Creating worktree: {worktreeName}[/]");
-
             // Create worktree with detached HEAD at current commit
             var result = await RunGitAsync(absoluteRepoPath, $"worktree add --detach \"{worktreePath}\" HEAD");
             if (result.ExitCode != 0)
@@ -52,7 +49,6 @@ public class WorktreeService
         {
             if (Directory.Exists(worktreePath))
             {
-                AnsiConsole.MarkupLine($"[grey]Removing worktree: {Path.GetFileName(worktreePath)}[/]");
                 await RemoveWorktreeAsync(absoluteRepoPath, worktreePath);
             }
         }
