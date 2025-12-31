@@ -44,7 +44,7 @@ public class WorktreeService
         return worktrees;
     }
 
-    public async Task DeleteWorktreesAsync(string repoPath, List<string> worktreePaths)
+    public static async Task DeleteWorktreesAsync(string repoPath, List<string> worktreePaths)
     {
         var absoluteRepoPath = Path.GetFullPath(repoPath);
 
@@ -57,7 +57,7 @@ public class WorktreeService
         }
     }
 
-    private async Task RemoveWorktreeAsync(string repoPath, string worktreePath)
+    private static async Task RemoveWorktreeAsync(string repoPath, string worktreePath)
     {
         // Force remove the worktree
         await RunGitAsync(repoPath, $"worktree remove \"{worktreePath}\" --force");

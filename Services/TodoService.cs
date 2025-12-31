@@ -7,7 +7,7 @@ public class TodoService
     private const string RivalsHeader = "## Rivals";
     private const string RivalsFooter = "You can steal any work or smart ideas from your competition!";
 
-    public async Task InjectRivalsAsync(string worktreePath, string todoFileName, List<string> allWorktreePaths)
+    public static async Task InjectRivalsAsync(string worktreePath, string todoFileName, List<string> allWorktreePaths)
     {
         var todoPath = Path.Combine(worktreePath, todoFileName);
 
@@ -30,7 +30,7 @@ public class TodoService
         await File.WriteAllTextAsync(todoPath, newContent);
     }
 
-    public async Task<bool> HasRemainingItemsAsync(string repoPath, string todoFileName)
+    public static async Task<bool> HasRemainingItemsAsync(string repoPath, string todoFileName)
     {
         var todoPath = Path.Combine(repoPath, todoFileName);
 
@@ -48,18 +48,19 @@ public class TodoService
         return !string.IsNullOrWhiteSpace(content);
     }
 
-    private string BuildRivalsSection(string currentWorktree, List<string> allWorktreePaths)
+    private static string BuildRivalsSection(string currentWorktree, List<string> allWorktreePaths)
     {
         var sb = new StringBuilder();
         sb.AppendLine(RivalsHeader);
 
         foreach (var path in allWorktreePaths)
         {
-            if (path != currentWorktree)
-            {
-                var name = Path.GetFileName(path);
-                sb.AppendLine($"- {name}: {path}");
-            }
+            if (path == currentWorktree) continue;
+            
+            var name = Path.GetFileName(path);
+            sb
+                .Append($"- {name}: {path}")
+                .AppendLine();
         }
 
         sb.AppendLine();
@@ -68,7 +69,7 @@ public class TodoService
         return sb.ToString();
     }
 
-    private string RemoveRivalsSection(string content)
+    private static string RemoveRivalsSection(string content)
     {
         var lines = content.Split('\n').ToList();
         var startIndex = -1;

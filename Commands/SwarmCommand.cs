@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.Services;
+using JetBrains.Annotations;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace Asynkron.Swarm.Commands;
 
+[UsedImplicitly]
 public class SwarmSettings : CommandSettings
 {
     private static readonly string DefaultRepo = Path.Combine(
@@ -15,30 +17,36 @@ public class SwarmSettings : CommandSettings
     [CommandOption("-a|--agents <COUNT>")]
     [Description("Number of worker agents to spawn")]
     [DefaultValue(4)]
+    [UsedImplicitly]
     public int Agents { get; init; } = 4;
 
     [CommandOption("-r|--repo <PATH>")]
     [Description("Path to the git repository")]
+    [UsedImplicitly]
     public string Repo { get; init; } = DefaultRepo;
 
     [CommandOption("-t|--todo <FILE>")]
     [Description("Name of the todo file (relative to repo root)")]
     [DefaultValue("todo/todo.md")]
+    [UsedImplicitly]
     public string Todo { get; init; } = "todo/todo.md";
 
     [CommandOption("-m|--minutes <MINUTES>")]
     [Description("Minutes to run each round before killing workers")]
     [DefaultValue(5)]
+    [UsedImplicitly]
     public int Minutes { get; init; } = 5;
 
     [CommandOption("--agent-type <TYPE>")]
     [Description("Agent CLI to use: Claude or Codex")]
     [DefaultValue(AgentType.Claude)]
+    [UsedImplicitly]
     public AgentType AgentType { get; init; } = AgentType.Claude;
 
     [CommandOption("--max-rounds <COUNT>")]
     [Description("Maximum number of rounds before stopping")]
     [DefaultValue(10)]
+    [UsedImplicitly]
     public int MaxRounds { get; init; } = 10;
 
     public override ValidationResult Validate()
@@ -85,6 +93,7 @@ public class SwarmSettings : CommandSettings
     }
 }
 
+[UsedImplicitly]
 public class SwarmCommand : AsyncCommand<SwarmSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, SwarmSettings settings)
@@ -127,7 +136,7 @@ public class SwarmCommand : AsyncCommand<SwarmSettings>
             orchestrator.KillAllAgents();
             await orchestrator.CleanupWorktreesAsync();
             // Print error after cleanup (UI is stopped by now)
-            Console.Error.WriteLine($"Error: {ex.Message}");
+            await Console.Error.WriteLineAsync($"Error: {ex.Message}");
             return 1;
         }
     }

@@ -1,14 +1,15 @@
+using System.Globalization;
 using Asynkron.Swarm.Models;
 using Asynkron.Swarm.Services;
 using Spectre.Console;
 
 namespace Asynkron.Swarm.UI;
 
-public class SwarmUI : IDisposable
+public sealed class SwarmUI : IDisposable
 {
     private readonly AgentRegistry _registry;
     private readonly CancellationTokenSource _cts = new();
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     private int _selectedIndex;
     private string? _selectedAgentId;
@@ -25,13 +26,13 @@ public class SwarmUI : IDisposable
     private TimeSpan _remainingTime;
 
     private const int LogTailLines = 50;
-    private const int RefreshMs = 250;
+    private const int RefreshMs = 20;
     private const int MaxStatusMessages = 10;
 
     // Reusable layout structure
     private readonly Layout _layout;
 
-    private class LogCache
+    private sealed class LogCache
     {
         public long LastPosition { get; set; }
         public long LastSize { get; set; }
@@ -352,7 +353,7 @@ public class SwarmUI : IDisposable
         UpdateLogCache(agent.LogPath, cache);
 
         var statusText = agent.IsRunning ? "[green]Running[/]" : "[red]Stopped[/]";
-        var timeStamp = DateTime.Now.ToString("HH:mm:ss");
+        var timeStamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         var headerText = $"[bold]{agent.Name}[/] - {statusText} - [grey]{agent.Runtime}[/] - [grey]{timeStamp} ({cache.TotalLineCount} lines)[/]";
 
         return new Panel(new Text(cache.CachedContent))
@@ -361,7 +362,7 @@ public class SwarmUI : IDisposable
             .Expand();
     }
 
-    private void UpdateLogCache(string logPath, LogCache cache)
+    private static void UpdateLogCache(string logPath, LogCache cache)
     {
         try
         {

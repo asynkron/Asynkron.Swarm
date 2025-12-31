@@ -47,7 +47,7 @@ public class RoundOrchestrator
         if (_currentRepoPath != null && _currentWorktreePaths.Count > 0)
         {
             _ui?.AddStatus("Cleaning up worktrees...");
-            await _worktreeService.DeleteWorktreesAsync(_currentRepoPath, _currentWorktreePaths);
+            await WorktreeService.DeleteWorktreesAsync(_currentRepoPath, _currentWorktreePaths);
             _currentWorktreePaths.Clear();
         }
     }
@@ -72,7 +72,7 @@ public class RoundOrchestrator
             for (var round = 1; round <= options.MaxRounds; round++)
             {
                 // Check if there are remaining items in todo
-                var hasItems = await _todoService.HasRemainingItemsAsync(absoluteRepoPath, options.Todo);
+                var hasItems = await TodoService.HasRemainingItemsAsync(absoluteRepoPath, options.Todo);
                 if (!hasItems)
                 {
                     _ui.AddStatus("[green]All todo items completed![/]");
@@ -112,7 +112,7 @@ public class RoundOrchestrator
             _ui.SetPhase("Injecting rivals...");
             foreach (var worktreePath in worktreePaths)
             {
-                await _todoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
+                await TodoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
             }
 
             // Step 3: Start worker agents
@@ -190,7 +190,7 @@ public class RoundOrchestrator
             // Step 11: Cleanup
             _ui.SetPhase("Cleaning up...");
             _agentService.RemoveAgent(supervisor);
-            await _worktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
+            await WorktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
             _currentWorktreePaths.Clear();
 
             _ui.AddStatus($"[green]Round {round} complete[/]");
@@ -201,7 +201,7 @@ public class RoundOrchestrator
 
             // Cleanup on error
             _agentService.RemoveAllAgents();
-            await _worktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
+            await WorktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
             throw;
         }
     }

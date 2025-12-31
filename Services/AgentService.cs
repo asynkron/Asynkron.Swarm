@@ -88,7 +88,7 @@ public class AgentService
         _registry.MarkStopped(agent.Id);
     }
 
-    public async Task AppendStoppedMarkerAsync(AgentInfo agent)
+    private static async Task AppendStoppedMarkerAsync(AgentInfo agent)
     {
         const string marker = "\n\n<<worker has been stopped>>\n";
         await File.AppendAllTextAsync(agent.LogPath, marker);
@@ -125,7 +125,7 @@ public class AgentService
         };
     }
 
-    private Process StartProcess(string fileName, string arguments, string workingDir, string logFilePath)
+    private static Process StartProcess(string fileName, string arguments, string workingDir, string logFilePath)
     {
         // Create or truncate log file
         File.WriteAllText(logFilePath, $"[{DateTime.Now:O}] Agent started\n");
