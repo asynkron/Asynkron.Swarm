@@ -15,16 +15,34 @@ public class SwarmSettings : CommandSettings
         "git", "asynkron", "Asynkron.JsEngine");
 
     [CommandOption("--claude <COUNT>")]
-    [Description("Number of Claude worker agents")]
-    [DefaultValue(3)]
+    [Description("Number of Claude worker agents (default: 4 if no agents specified)")]
+    [DefaultValue(0)]
     [UsedImplicitly]
-    public int ClaudeWorkers { get; init; } = 3;
+    public int ClaudeWorkers { get; init; } = 0;
 
     [CommandOption("--codex <COUNT>")]
     [Description("Number of Codex worker agents")]
-    [DefaultValue(3)]
+    [DefaultValue(0)]
     [UsedImplicitly]
-    public int CodexWorkers { get; init; } = 3;
+    public int CodexWorkers { get; init; } = 0;
+
+    [CommandOption("--copilot <COUNT>")]
+    [Description("Number of Copilot worker agents")]
+    [DefaultValue(0)]
+    [UsedImplicitly]
+    public int CopilotWorkers { get; init; } = 0;
+
+    [CommandOption("--gemini <COUNT>")]
+    [Description("Number of Gemini worker agents")]
+    [DefaultValue(0)]
+    [UsedImplicitly]
+    public int GeminiWorkers { get; init; } = 0;
+
+    [CommandOption("--each <COUNT>")]
+    [Description("Spawn this many of each agent type")]
+    [DefaultValue(0)]
+    [UsedImplicitly]
+    public int Each { get; init; } = 0;
 
     [CommandOption("-r|--repo <PATH>")]
     [Description("Path to the git repository")]
@@ -67,9 +85,14 @@ public class SwarmSettings : CommandSettings
             return ValidationResult.Error("Codex workers cannot be negative");
         }
 
-        if (ClaudeWorkers + CodexWorkers < 1)
+        if (CopilotWorkers < 0)
         {
-            return ValidationResult.Error("Total workers must be at least 1");
+            return ValidationResult.Error("Copilot workers cannot be negative");
+        }
+
+        if (GeminiWorkers < 0)
+        {
+            return ValidationResult.Error("Gemini workers cannot be negative");
         }
 
         if (Minutes < 1)
@@ -133,10 +156,23 @@ public class SwarmCommand : AsyncCommand<SwarmSettings>
 
         try
         {
+            // Handle --each flag: spawn N of each agent type
+            var claudeWorkers = settings.Each > 0 ? settings.Each : settings.ClaudeWorkers;
+            var codexWorkers = settings.Each > 0 ? settings.Each : settings.CodexWorkers;
+            var copilotWorkers = settings.Each > 0 ? settings.Each : settings.CopilotWorkers;
+            var geminiWorkers = settings.Each > 0 ? settings.Each : settings.GeminiWorkers;
+
+            // Default to 4 Claude workers if no agents specified
+            var totalSpecified = claudeWorkers + codexWorkers + copilotWorkers + geminiWorkers;
+            if (totalSpecified == 0)
+                claudeWorkers = 4;
+
             var options = new SwarmOptions
             {
-                ClaudeWorkers = settings.ClaudeWorkers,
-                CodexWorkers = settings.CodexWorkers,
+                ClaudeWorkers = claudeWorkers,
+                CodexWorkers = codexWorkers,
+                CopilotWorkers = copilotWorkers,
+                GeminiWorkers = geminiWorkers,
                 Repo = settings.Repo,
                 Todo = settings.Todo,
                 Minutes = settings.Minutes,

@@ -62,7 +62,7 @@ public class RoundOrchestrator
 
         _ui.SetRound(0, options.MaxRounds);
         _ui.AddStatus($"Repository: {absoluteRepoPath}");
-        _ui.AddStatus($"Workers: {options.ClaudeWorkers} Claude + {options.CodexWorkers} Codex");
+        _ui.AddStatus($"Workers: {options.ClaudeWorkers} Claude + {options.CodexWorkers} Codex + {options.CopilotWorkers} Copilot + {options.GeminiWorkers} Gemini");
         _ui.AddStatus($"Supervisor: {options.SupervisorType}");
         _ui.AddStatus($"Time per round: {options.Minutes} min");
 
@@ -121,12 +121,12 @@ public class RoundOrchestrator
             await File.WriteAllTextAsync(sharedFilePath, $"# Shared Agent Communication - Round {round}\n\nAgents should document all their key findings below.\n\n---\n\n", token);
             _ui.AddStatus($"Shared file: {sharedFilePath}");
 
-            // Step 4: Start worker agents (Claude first, then Codex)
+            // Step 4: Start worker agents (Claude, Codex, Copilot, Gemini)
             _ui.SetPhase("Starting workers...");
             var workers = new List<WorkerAgent>();
             for (var i = 0; i < worktreePaths.Count; i++)
             {
-                var agentType = i < options.ClaudeWorkers ? AgentType.Claude : AgentType.Codex;
+                var agentType = GetAgentType(i, options);
                 var worker = _agentService.CreateWorker(
                     round,
                     i + 1,
@@ -238,5 +238,16 @@ public class RoundOrchestrator
         }
 
         return false;
+    }
+
+    private static AgentType GetAgentType(int index, SwarmOptions options)
+    {
+        if (index < options.ClaudeWorkers)
+            return AgentType.Claude;
+        if (index < options.ClaudeWorkers + options.CodexWorkers)
+            return AgentType.Codex;
+        if (index < options.ClaudeWorkers + options.CodexWorkers + options.CopilotWorkers)
+            return AgentType.Copilot;
+        return AgentType.Gemini;
     }
 }

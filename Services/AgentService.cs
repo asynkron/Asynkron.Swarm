@@ -24,6 +24,8 @@ public class AgentService
         {
             AgentType.Claude => new ClaudeCli(),
             AgentType.Codex => new CodexCli(),
+            AgentType.Copilot => new CopilotCli(),
+            AgentType.Gemini => new GeminiCli(),
             _ => throw new ArgumentOutOfRangeException(nameof(agentType))
         };
     }
