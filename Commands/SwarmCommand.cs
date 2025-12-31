@@ -23,8 +23,8 @@ public class SwarmSettings : CommandSettings
 
     [CommandOption("-t|--todo <FILE>")]
     [Description("Name of the todo file (relative to repo root)")]
-    [DefaultValue("todo.md")]
-    public string Todo { get; init; } = "todo.md";
+    [DefaultValue("todo/todo.md")]
+    public string Todo { get; init; } = "todo/todo.md";
 
     [CommandOption("-m|--minutes <MINUTES>")]
     [Description("Minutes to run each round before killing workers")]
