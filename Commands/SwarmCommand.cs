@@ -8,14 +8,18 @@ namespace Asynkron.Swarm.Commands;
 
 public class SwarmSettings : CommandSettings
 {
+    private static readonly string DefaultRepo = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "git", "asynkron", "Asynkron.JsEngine");
+
     [CommandOption("-a|--agents <COUNT>")]
     [Description("Number of worker agents to spawn")]
-    [DefaultValue(3)]
-    public int Agents { get; init; } = 3;
+    [DefaultValue(4)]
+    public int Agents { get; init; } = 4;
 
     [CommandOption("-r|--repo <PATH>")]
     [Description("Path to the git repository")]
-    public required string Repo { get; init; }
+    public string Repo { get; init; } = DefaultRepo;
 
     [CommandOption("-t|--todo <FILE>")]
     [Description("Name of the todo file (relative to repo root)")]
