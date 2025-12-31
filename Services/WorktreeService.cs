@@ -17,6 +17,9 @@ public class WorktreeService
         var worktrees = new List<string>();
         var absoluteRepoPath = Path.GetFullPath(repoPath);
 
+        // Prune stale worktree entries from previous crashes
+        await RunGitAsync(absoluteRepoPath, "worktree prune");
+
         for (var i = 1; i <= count; i++)
         {
             var worktreeName = $"round{round}-agent{i}";
