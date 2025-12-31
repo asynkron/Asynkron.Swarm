@@ -44,19 +44,8 @@ public class TodoService
         // Remove rivals section for checking
         content = RemoveRivalsSection(content);
 
-        // Check if there are any checkbox items remaining
-        var lines = content.Split('\n');
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-            // Look for unchecked markdown checkboxes
-            if (trimmed.StartsWith("- [ ]") || trimmed.StartsWith("* [ ]"))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        // Check if there's any non-whitespace content remaining
+        return !string.IsNullOrWhiteSpace(content);
     }
 
     private string BuildRivalsSection(string currentWorktree, List<string> allWorktreePaths)
