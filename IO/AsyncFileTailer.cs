@@ -107,11 +107,15 @@ public sealed partial class AsyncFileTailer : IDisposable
         // Strip ANSI escape codes
         var stripped = AnsiRegex().Replace(input, "");
 
-        // Remove non-printable characters (keep tab, newline, carriage return)
+        // Remove non-printable characters, replace tabs with spaces
         var sb = new StringBuilder(stripped.Length);
         foreach (var c in stripped)
         {
-            if (c >= 32 || c == '\t' || c == '\n' || c == '\r')
+            if (c == '\t')
+            {
+                sb.Append("    "); // 4 spaces
+            }
+            else if (c >= 32)
             {
                 sb.Append(c);
             }
