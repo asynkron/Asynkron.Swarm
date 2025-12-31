@@ -12,7 +12,8 @@ public sealed class SupervisorAgent(
     string repoPath,
     AgentCliBase cli,
     string logDir,
-    int restartCount = 0)
+    int restartCount = 0,
+    bool autopilot = false)
     : AgentBase(id: $"round{round}-supervisor",
         name: "Supervisor",
         cli: cli,
@@ -21,12 +22,17 @@ public sealed class SupervisorAgent(
         restartCount: restartCount)
 {
     private string RepoPath { get; } = repoPath;
+    private List<string> WorktreePaths { get; } = worktreePaths;
+    private List<string> WorkerLogPaths { get; } = workerLogPaths;
+    private bool Autopilot { get; } = autopilot;
 
     protected override TimeSpan HeartbeatTimeout => TimeSpan.FromSeconds(90);
 
     protected override Process SpawnProcess()
     {
-        var prompt = SupervisorPrompt.Build(worktreePaths, workerLogPaths, RepoPath, RestartCount);
+        var prompt = Autopilot
+            ? SupervisorPrompt.BuildAutopilot(WorktreePaths, WorkerLogPaths, RestartCount)
+            : SupervisorPrompt.Build(WorktreePaths, WorkerLogPaths, RepoPath, RestartCount);
         var arguments = Cli.BuildArguments(prompt, GetModel());
         var stdinContent = Cli.UseStdin ? prompt : null;
 

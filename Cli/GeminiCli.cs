@@ -19,53 +19,65 @@ public class GeminiCli : AgentCliBase
         if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{'))
             return string.IsNullOrWhiteSpace(line) ? [] : [new AgentMessage(AgentMessageKind.Say, line)];
 
-        using var doc = JsonDocument.Parse(line);
-        var root = doc.RootElement;
-
-        if (!root.TryGetProperty("type", out var typeEl))
-            return [];
-
-        var type = typeEl.GetString();
-        return type switch
+        try
         {
-            "message" => ParseMessage(root),
-            "tool_use" => ParseToolUse(root),
-            "tool_result" => ParseToolResult(root),
-            "result" => ParseResult(root),
-            _ => []
-        };
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("type", out var typeEl))
+                return [];
+
+            var type = typeEl.GetString();
+
+            // Must materialize results before JsonDocument is disposed
+            return type switch
+            {
+                "message" => ParseMessage(root),
+                "tool_use" => ParseToolUse(root),
+                "tool_result" => ParseToolResult(root),
+                "result" => ParseResult(root),
+                _ => []
+            };
+        }
+        catch (JsonException)
+        {
+            // Malformed JSON, treat as plain text
+            return [new AgentMessage(AgentMessageKind.Say, line)];
+        }
     }
 
-    private static IEnumerable<AgentMessage> ParseMessage(JsonElement root)
+    private static AgentMessage[] ParseMessage(JsonElement root)
     {
         if (root.TryGetProperty("role", out var role) && role.GetString() == "assistant" &&
             root.TryGetProperty("content", out var content))
         {
             var text = content.GetString() ?? "";
             if (!string.IsNullOrWhiteSpace(text))
-                yield return new AgentMessage(AgentMessageKind.Say, text);
+                return [new AgentMessage(AgentMessageKind.Say, text)];
         }
+        return [];
     }
 
-    private static IEnumerable<AgentMessage> ParseToolUse(JsonElement root)
+    private static AgentMessage[] ParseToolUse(JsonElement root)
     {
         var toolName = root.TryGetProperty("tool_name", out var name) ? name.GetString() : null;
         var toolParams = root.TryGetProperty("parameters", out var p) ? p.ToString() : null;
         var summary = GetToolSummary(toolName, root);
-        yield return new AgentMessage(AgentMessageKind.Do, summary, toolName, toolParams);
+        return [new AgentMessage(AgentMessageKind.Do, summary, toolName, toolParams)];
     }
 
-    private static IEnumerable<AgentMessage> ParseToolResult(JsonElement root)
+    private static AgentMessage[] ParseToolResult(JsonElement root)
     {
         if (root.TryGetProperty("output", out var output))
         {
             var outputStr = output.GetString() ?? "";
             if (!string.IsNullOrWhiteSpace(outputStr))
-                yield return new AgentMessage(AgentMessageKind.See, outputStr);
+                return [new AgentMessage(AgentMessageKind.See, outputStr)];
         }
+        return [];
     }
 
-    private static IEnumerable<AgentMessage> ParseResult(JsonElement root)
+    private static AgentMessage[] ParseResult(JsonElement root)
     {
         if (root.TryGetProperty("status", out var resultStatus))
         {
@@ -73,9 +85,10 @@ public class GeminiCli : AgentCliBase
             if (statusStr == "error" && root.TryGetProperty("error", out var error))
             {
                 var errorMsg = error.TryGetProperty("message", out var msg) ? msg.GetString() : "Unknown error";
-                yield return new AgentMessage(AgentMessageKind.Say, $"[Error: {errorMsg}]");
+                return [new AgentMessage(AgentMessageKind.Say, $"[Error: {errorMsg}]")];
             }
         }
+        return [];
     }
 
     private static string GetToolSummary(string? toolName, JsonElement root)

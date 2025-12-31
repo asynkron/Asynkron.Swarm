@@ -13,7 +13,9 @@ public sealed class WorkerAgent(
     string sharedFilePath,
     AgentCliBase cli,
     string logDir,
-    int restartCount = 0)
+    int restartCount = 0,
+    bool autopilot = false,
+    string? branchName = null)
     : AgentBase(id: $"round{round}-worker{agentNumber}",
         name: $"Worker {agentNumber}",
         cli: cli,
@@ -25,12 +27,14 @@ public sealed class WorkerAgent(
     public string WorktreePath { get; } = worktreePath;
     public string TodoFile { get; } = todoFile;
     public string SharedFilePath { get; } = sharedFilePath;
+    public bool Autopilot { get; } = autopilot;
+    public string? BranchName { get; } = branchName;
 
     protected override TimeSpan HeartbeatTimeout => TimeSpan.FromSeconds(180);
 
     protected override Process SpawnProcess()
     {
-        var prompt = WorkerPrompt.Build(TodoFile, Name, SharedFilePath, RestartCount);
+        var prompt = WorkerPrompt.Build(TodoFile, Name, SharedFilePath, RestartCount, Autopilot, BranchName);
         var arguments = Cli.BuildArguments(prompt, GetModel());
         var stdinContent = Cli.UseStdin ? prompt : null;
 

@@ -60,28 +60,44 @@ public class RoundOrchestrator
         // Start UI immediately
         var uiTask = _ui.RunAsync(cts.Token);
 
-        _ui.SetRound(0, options.MaxRounds);
+        _ui.SetRound(0, options.Autopilot ? 1 : options.MaxRounds);
         _ui.AddStatus($"Repository: {absoluteRepoPath}");
         _ui.AddStatus($"Workers: {options.ClaudeWorkers} Claude + {options.CodexWorkers} Codex + {options.CopilotWorkers} Copilot + {options.GeminiWorkers} Gemini");
         _ui.AddStatus($"Supervisor: {options.SupervisorType}");
-        _ui.AddStatus($"Time per round: {options.Minutes} min");
+        if (options.Autopilot)
+        {
+            _ui.AddStatus("[yellow]Autopilot mode: No timer, workers will create PRs and exit[/]");
+        }
+        else
+        {
+            _ui.AddStatus($"Time per round: {options.Minutes} min");
+        }
 
         try
         {
-            for (var round = 1; round <= options.MaxRounds; round++)
+            if (options.Autopilot)
             {
-                // Check if there are remaining items in todo
-                var hasItems = await TodoService.HasRemainingItemsAsync(absoluteRepoPath, options.Todo);
-                if (!hasItems)
+                // Autopilot mode: single round, no timer, workers create PRs
+                await RunAutopilotAsync(options, absoluteRepoPath, cts.Token);
+                _ui.AddStatus("[bold green]Autopilot complete. All workers finished.[/]");
+            }
+            else
+            {
+                for (var round = 1; round <= options.MaxRounds; round++)
                 {
-                    _ui.AddStatus("[green]All todo items completed![/]");
-                    break;
+                    // Check if there are remaining items in todo
+                    var hasItems = await TodoService.HasRemainingItemsAsync(absoluteRepoPath, options.Todo);
+                    if (!hasItems)
+                    {
+                        _ui.AddStatus("[green]All todo items completed![/]");
+                        break;
+                    }
+
+                    await RunRoundAsync(options, absoluteRepoPath, round, cts.Token);
                 }
 
-                await RunRoundAsync(options, absoluteRepoPath, round, cts.Token);
+                _ui.AddStatus("[bold green]Swarm orchestration complete.[/]");
             }
-
-            _ui.AddStatus("[bold green]Swarm orchestration complete.[/]");
             await Task.Delay(2000, cts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
         finally
@@ -89,6 +105,127 @@ public class RoundOrchestrator
             cts.Cancel();
             await uiTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             _ui.Dispose();
+        }
+    }
+
+    private async Task RunAutopilotAsync(SwarmOptions options, string repoPath, CancellationToken token)
+    {
+        const int round = 1;
+        _agentService.RemoveAllAgents();
+        _currentRepoPath = repoPath;
+
+        _ui!.SetRound(round, 1);
+        _ui.SetPhase("Creating worktrees...");
+
+        // Create worktrees
+        var worktreePaths = await _worktreeService.CreateWorktreesAsync(repoPath, round, options.TotalWorkers);
+        _currentWorktreePaths = worktreePaths;
+
+        try
+        {
+            // Inject rivals into each worktree's todo
+            _ui.SetPhase("Injecting rivals...");
+            foreach (var worktreePath in worktreePaths)
+            {
+                await TodoService.InjectRivalsAsync(worktreePath, options.Todo, worktreePaths);
+            }
+
+            // Create shared communication file
+            var swarmDir = Path.Combine(repoPath, ".swarm");
+            Directory.CreateDirectory(swarmDir);
+            var sharedFilePath = Path.Combine(swarmDir, "autopilot-shared.md");
+            await File.WriteAllTextAsync(sharedFilePath, "# Shared Agent Communication - Autopilot\n\nAgents should document all their key findings below.\n\n---\n\n", token);
+            _ui.AddStatus($"Shared file: {sharedFilePath}");
+
+            // Generate timestamp for unique branch names
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+
+            // Start worker agents with autopilot enabled
+            _ui.SetPhase("Starting workers...");
+            var workers = new List<WorkerAgent>();
+            for (var i = 0; i < worktreePaths.Count; i++)
+            {
+                var agentType = GetAgentType(i, options);
+                var branchName = $"autopilot/worker{i + 1}-{timestamp}";
+                var worker = _agentService.CreateWorker(
+                    round,
+                    i + 1,
+                    worktreePaths[i],
+                    options.Todo,
+                    sharedFilePath,
+                    agentType,
+                    autopilot: true,
+                    branchName: branchName);
+                worker.Start();
+                workers.Add(worker);
+                _ui.AddStatus($"Started {worker.Name} ({agentType}) -> branch: {branchName}");
+            }
+
+            // Start supervisor agent (monitoring only in autopilot mode)
+            _ui.SetPhase("Starting supervisor...");
+            var workerLogPaths = workers.Select(w => w.LogPath).ToList();
+            var supervisor = _agentService.CreateSupervisor(
+                round,
+                worktreePaths,
+                workerLogPaths,
+                repoPath,
+                options.SupervisorType,
+                autopilot: true);
+            supervisor.Start();
+            _ui.AddStatus($"Started Supervisor ({options.SupervisorType}) - monitoring mode");
+
+            // Subscribe to restart events
+            supervisor.OnRestarted += a => _ui.AddStatus($"[#98c379]Restarted {a.Name}[/]");
+            foreach (var worker in workers)
+            {
+                worker.OnRestarted += a => _ui.AddStatus($"[#98c379]Restarted {a.Name}[/]");
+            }
+
+            // Wait indefinitely for all workers to complete (no timer)
+            _ui.SetPhase("Workers running (no timer)...");
+            while (!token.IsCancellationRequested)
+            {
+                var runningCount = workers.Count(w => w.IsRunning);
+                if (runningCount == 0)
+                {
+                    _ui.AddStatus("[green]All workers completed[/]");
+                    break;
+                }
+
+                _ui.SetPhase($"Workers running: {runningCount}/{workers.Count} active");
+                await Task.Delay(1000, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+
+            // Wait for supervisor to finish its final summary
+            _ui.SetPhase("Waiting for supervisor final summary...");
+            var supervisorTimeout = TimeSpan.FromMinutes(2);
+            var supervisorComplete = await WaitForAgentAsync(supervisor, supervisorTimeout);
+            if (!supervisorComplete)
+            {
+                _ui.AddStatus("Supervisor timed out, stopping");
+                supervisor.Stop();
+            }
+            else
+            {
+                _ui.AddStatus("Supervisor completed");
+            }
+
+            // Cleanup
+            _ui.SetPhase("Cleaning up...");
+            _agentService.RemoveAgent(supervisor);
+            foreach (var worker in workers)
+            {
+                _agentService.RemoveAgent(worker);
+            }
+            await WorktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
+            _currentWorktreePaths.Clear();
+        }
+        catch (Exception ex)
+        {
+            _ui.AddStatus($"[red]Error: {ex.Message}[/]");
+            _agentService.RemoveAllAgents();
+            await WorktreeService.DeleteWorktreesAsync(repoPath, worktreePaths);
+            throw;
         }
     }
 

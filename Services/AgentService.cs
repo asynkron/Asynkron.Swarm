@@ -36,7 +36,9 @@ public class AgentService
         string worktreePath,
         string todoFile,
         string sharedFilePath,
-        AgentType agentType)
+        AgentType agentType,
+        bool autopilot = false,
+        string? branchName = null)
     {
         var cli = CreateCli(agentType);
         var worker = new WorkerAgent(
@@ -46,7 +48,10 @@ public class AgentService
             todoFile,
             sharedFilePath,
             cli,
-            _logDir);
+            _logDir,
+            restartCount: 0,
+            autopilot: autopilot,
+            branchName: branchName);
 
         _registry.Register(worker);
         return worker;
@@ -57,7 +62,8 @@ public class AgentService
         List<string> worktreePaths,
         List<string> workerLogPaths,
         string repoPath,
-        AgentType agentType)
+        AgentType agentType,
+        bool autopilot = false)
     {
         var cli = CreateCli(agentType);
         var supervisor = new SupervisorAgent(
@@ -66,7 +72,9 @@ public class AgentService
             workerLogPaths,
             repoPath,
             cli,
-            _logDir);
+            _logDir,
+            restartCount: 0,
+            autopilot: autopilot);
 
         _registry.Register(supervisor);
         return supervisor;

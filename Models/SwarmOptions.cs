@@ -11,6 +11,7 @@ public class SwarmOptions
     public required int Minutes { get; init; }
     public required AgentType SupervisorType { get; init; }
     public int MaxRounds { get; init; } = 10;
+    public bool Autopilot { get; init; } = false;
 
     public int TotalWorkers => ClaudeWorkers + CodexWorkers + CopilotWorkers + GeminiWorkers;
 }

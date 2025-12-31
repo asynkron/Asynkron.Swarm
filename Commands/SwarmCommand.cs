@@ -62,7 +62,7 @@ public class SwarmSettings : CommandSettings
     public int Minutes { get; init; } = 15;
 
     [CommandOption("--supervisor <TYPE>")]
-    [Description("Supervisor agent type: Claude or Codex")]
+    [Description("Supervisor agent type: Claude, Codex, Copilot, or Gemini")]
     [DefaultValue(AgentType.Claude)]
     [UsedImplicitly]
     public AgentType SupervisorType { get; init; } = AgentType.Claude;
@@ -72,6 +72,12 @@ public class SwarmSettings : CommandSettings
     [DefaultValue(10)]
     [UsedImplicitly]
     public int MaxRounds { get; init; } = 10;
+
+    [CommandOption("--autopilot")]
+    [Description("Run without timer, create GitHub PRs when done, then exit")]
+    [DefaultValue(false)]
+    [UsedImplicitly]
+    public bool Autopilot { get; init; } = false;
 
     public override ValidationResult Validate()
     {
@@ -95,7 +101,7 @@ public class SwarmSettings : CommandSettings
             return ValidationResult.Error("Gemini workers cannot be negative");
         }
 
-        if (Minutes < 1)
+        if (!Autopilot && Minutes < 1)
         {
             return ValidationResult.Error("Minutes must be at least 1");
         }
@@ -177,7 +183,8 @@ public class SwarmCommand : AsyncCommand<SwarmSettings>
                 Todo = settings.Todo,
                 Minutes = settings.Minutes,
                 SupervisorType = settings.SupervisorType,
-                MaxRounds = settings.MaxRounds
+                MaxRounds = settings.MaxRounds,
+                Autopilot = settings.Autopilot
             };
 
             await orchestrator.RunAsync(options);

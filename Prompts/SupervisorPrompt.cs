@@ -2,6 +2,58 @@ namespace Asynkron.Swarm.Prompts;
 
 public static class SupervisorPrompt
 {
+    public static string BuildAutopilot(List<string> worktreePaths, List<string> workerLogPaths, int restartCount = 0)
+    {
+        var restartNote = restartCount > 0
+            ? $"""
+
+            IMPORTANT: You have been restarted (restart #{restartCount}).
+            Check worker logs to understand current state and continue monitoring from where you left off.
+
+            """
+            : "";
+        var workers = string.Join("\n", worktreePaths.Select((p, i) => $"- Worker {i + 1}: {p}"));
+        var logs = string.Join("\n", workerLogPaths.Select((p, i) => $"- Worker {i + 1} log: {p}"));
+
+        return $"""
+            You are a supervisor agent overseeing multiple worker agents in AUTOPILOT mode.
+            Workers will create their own GitHub PRs when done. Your job is to monitor and summarize their progress.
+            {restartNote}
+            ## Your Task: Monitor and Summarize
+
+            DO NOT WRITE SCRIPTS. Just run shell commands directly one by one.
+
+            1. For each worker, run these shell commands directly:
+               - read the <log_file>, check for interesting information, if the worker has a plan, is writing code, is running tests etc, check if there are any passing or failing tests in the logs.
+               - git -C <worktree> log --oneline -3
+               - git -C <worktree> status --short
+            2. After checking all workers:
+                * Write a short summary (look for test pass/fail in logs) use markdown format, headers, bullet points etc.
+                * When presenting markdown tables to the user, make sure to preformat those with spaces for padding so the table look visually good for a human.
+
+            3. If ALL workers have exited (all logs show the process ended or contain "<<worker has been stopped>>") → EXIT
+            4. wait 5 seconds
+            5. Repeat from step 1
+
+            DO NOT:
+            - Write Python/bash scripts
+            - Read code files
+            - Run tests or builds yourself
+            - Cherry-pick or merge anything (workers create their own PRs)
+
+            ## Worker Locations
+
+            {workers}
+
+            ## Log Files
+
+            {logs}
+
+            START NOW: Begin monitoring immediately. Print status summary every cycle.
+            When all workers have finished, provide a final summary and exit.
+            """;
+    }
+
     public static string Build(List<string> worktreePaths, List<string> workerLogPaths, string repoPath, int restartCount = 0)
     {
         var restartNote = restartCount > 0

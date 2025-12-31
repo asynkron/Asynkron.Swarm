@@ -2,7 +2,7 @@ namespace Asynkron.Swarm.Prompts;
 
 public static class WorkerPrompt
 {
-    public static string Build(string todoFile, string agentName, string sharedFilePath, int restartCount = 0)
+    public static string Build(string todoFile, string agentName, string sharedFilePath, int restartCount = 0, bool autopilot = false, string? branchName = null)
     {
         var basePrompt = $"read {todoFile} and follow the instructions";
 
@@ -11,7 +11,7 @@ public static class WorkerPrompt
             ## Inter-Agent Communication
 
             You are part of a multi-agent swarm. To collaborate with other agents, use the shared file for
-            EVERY key-finding, such as bugs, why something works or does´t work, how to fix something, passing tests, 
+            EVERY key-finding, such as bugs, why something works or does´t work, how to fix something, passing tests,
              file: **{sharedFilePath}**
 
             ### Writing to the shared file
@@ -38,6 +38,20 @@ public static class WorkerPrompt
             IMPORTANT: When writing, always APPEND to the file - never overwrite existing content.
             """;
 
+        var autopilotInstructions = autopilot && branchName != null ? $"""
+
+            ## Autopilot Mode - GitHub PR Required
+
+            You are running in autopilot mode. When you have completed your work:
+            1. Commit all your changes with a descriptive commit message
+            2. Create a new branch named: {branchName}
+            3. Push the branch to origin: git push origin {branchName}
+            4. Create a GitHub PR using: gh pr create --title "<descriptive title>" --body "<summary of changes>"
+            5. Exit when done - do not wait for further instructions
+
+            IMPORTANT: You MUST create a GitHub PR before exiting. This is required in autopilot mode.
+            """ : "";
+
         if (restartCount > 0)
         {
             return $"""
@@ -48,12 +62,12 @@ public static class WorkerPrompt
                 2. Check git status to see uncommitted changes
                 3. Run the tests to see current state
                 4. Continue from where you left off
-                {sharedFileInstructions}
+                {sharedFileInstructions}{autopilotInstructions}
                 Original task: {basePrompt}
                 """;
         }
 
-        return basePrompt + sharedFileInstructions;
+        return basePrompt + sharedFileInstructions + autopilotInstructions;
     }
 }
 
