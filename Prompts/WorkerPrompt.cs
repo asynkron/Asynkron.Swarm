@@ -6,6 +6,25 @@ public static class WorkerPrompt
     {
         var basePrompt = $"run `cat {todoFile}` to read the todo file (use cat/tail, not Read tool - files can be large), then follow the instructions";
 
+        var waysOfWorkingInstructions = $"""
+
+            ## Ways of Working
+
+            - If a task is blocked, make a plan on how to unblock it
+                - Create sub-tasks in todo.md if needed
+                - Make it clear in the start of TODO that these subtasks are the current priority.
+                
+            - Work on ONE task at a time from the todo.md file
+            - When you complete a task, mark it done by removing it from todo.md
+            - Commit your changes with clear commit messages
+            - Push your commits to origin frequently
+            - If you get stuck, move on to the next task
+            - Use tools as needed to read files, run tests, build, etc.
+            - Keep track of what you've done and found in your messages
+
+            IMPORTANT: Focus on completing tasks from the todo.md file. Do not deviate from this list.
+            """;
+        
         var sharedFileInstructions = $"""
 
             ## Inter-Agent Communication
@@ -55,7 +74,9 @@ public static class WorkerPrompt
             return $"""
                 IMPORTANT: You have been restarted (restart #{restartCount}).
 
-                DO NOT read the todo.md file - you already picked a task before the restart.
+                DO NOT start with reading the todo.md file - you already picked a task before the restart.
+                You may however read it for more context if needed.
+                
                 Instead, recover your previous work:
 
                 1. Run `tail -500 {logPath}` to see what you were doing before the restart
@@ -63,10 +84,11 @@ public static class WorkerPrompt
                 3. Check git status to see uncommitted changes
                 4. Continue EXACTLY where you left off - do not start a new task
                 {sharedFileInstructions}{autopilotInstructions}
+                {waysOfWorkingInstructions}
                 """;
         }
 
-        return basePrompt + sharedFileInstructions + autopilotInstructions;
+        return basePrompt + sharedFileInstructions + autopilotInstructions + waysOfWorkingInstructions;
     }
 }
 
