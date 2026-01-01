@@ -12,22 +12,72 @@ Swarm creates multiple git worktrees from your repository and spawns AI agents (
 dotnet tool install -g Asynkron.Swarm
 ```
 
-## Usage
+## Typical Usage
+
+The most common workflow is to create a markdown file describing your task, then run swarm from within your repository:
 
 ```bash
-swarm --repo ~/git/my-project --todo todo.md --agents 3 --minutes 5
+# Navigate to your repository
+cd ~/projects/my-app
+
+# Create a task file describing what you want done
+echo "- [ ] Add user authentication with JWT tokens" > task.md
+
+# Run swarm with your task file
+swarm --todo task.md
+```
+
+Swarm auto-detects the git repository from the current directory. By default, it spawns 2 Claude workers that work in parallel on the task.
+
+You can also specify the repository path explicitly:
+
+```bash
+swarm --todo task.md --repo ~/projects/my-app
+```
+
+## Usage Examples
+
+```bash
+# Basic usage (from within a git repo)
+swarm --todo task.md
+
+# With explicit repo path
+swarm --todo task.md --repo ~/projects/my-app
+
+# With custom worker configuration
+swarm --todo task.md --claude 3 --gemini 2 --minutes 10
+
+# Mixed agent team with custom supervisor
+swarm --todo task.md --claude 2 --codex 1 --copilot 1 --supervisor Gemini
+
+# Arena mode (timed rounds with competitive evaluation)
+swarm --todo task.md --arena --minutes 5 --claude 4
+
+# Resume a previous session
+swarm --resume <session-id>
+
+# Detect which AI agents are installed
+swarm --detect
 ```
 
 ### Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-r, --repo` | Path to the git repository | (required) |
-| `-t, --todo` | Name of the todo file | `todo.md` |
-| `-a, --agents` | Number of worker agents | `3` |
-| `-m, --minutes` | Minutes per round | `5` |
-| `--agent-type` | Agent CLI: `Claude` or `Codex` | `Claude` |
-| `--max-rounds` | Maximum rounds | `10` |
+| `-r, --repo <PATH>` | Path to the git repository | Current directory |
+| `-t, --todo <FILE>` | Name of the todo file (relative to repo root) | `todo.md` |
+| `--claude <COUNT>` | Number of Claude worker agents | `2` (if no agents specified) |
+| `--codex <COUNT>` | Number of Codex worker agents | `0` |
+| `--copilot <COUNT>` | Number of Copilot worker agents | `0` |
+| `--gemini <COUNT>` | Number of Gemini worker agents | `0` |
+| `-m, --minutes <MINUTES>` | Minutes per round (arena mode) | `15` |
+| `--supervisor <TYPE>` | Supervisor agent: `Claude`, `Codex`, `Copilot`, or `Gemini` | `Claude` |
+| `--max-rounds <COUNT>` | Maximum number of rounds | `10` |
+| `--autopilot` | Runs continuously without timed rounds | `true` (default mode) |
+| `--arena` | Timed rounds where supervisor evaluates and picks winning changes | `false` |
+| `--resume <SESSION_ID>` | Resume a previous session by its ID | - |
+| `--detect` | Detect installed CLI agents and exit | - |
+| `--skip-detect` | Skip agent detection at startup | `false` |
 
 ## How It Works
 
@@ -68,7 +118,13 @@ The todo file should contain markdown checkboxes:
 
 - .NET 9.0+
 - Git
-- Claude CLI (`claude`) or Codex CLI (`codex`)
+- At least one AI coding CLI installed:
+  - Claude CLI (`claude`)
+  - Codex CLI (`codex`)
+  - Copilot CLI (`copilot`)
+  - Gemini CLI (`gemini`)
+
+Use `swarm --detect` to check which agents are available on your system.
 
 ## License
 

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Asynkron.Swarm.UI;
 
 namespace Asynkron.Swarm.IO;
 
@@ -22,38 +23,41 @@ public partial record AgentMessage(
 
     private string Format()
     {
+        var t = Theme.Current;
         var escaped = Content.Replace("[", "[[").Replace("]", "]]");
 
         return Kind switch
         {
-            AgentMessageKind.Say => $"[#abb2bf]{ApplyMarkdown(escaped)}[/]",
-            AgentMessageKind.Do => $"[#5c6370]  → {escaped}[/]",
-            AgentMessageKind.See => $"[#4b5263]{Truncate(escaped)}[/]",
+            AgentMessageKind.Say => $"[{t.SayTextColor}]{ApplyMarkdown(escaped)}[/]",
+            AgentMessageKind.Do => $"[{t.DoTextColor}]  → {escaped}[/]",
+            AgentMessageKind.See => $"[{t.SeeTextColor}]{Truncate(escaped)}[/]",
             _ => escaped
         };
     }
 
     private static string ApplyMarkdown(string input)
     {
-        // Headers: # ## ### → bold cyan
+        var t = Theme.Current;
+
+        // Headers: # ## ### → bold header color
         var result = HeaderRegex().Replace(input, m =>
         {
             var level = m.Groups[1].Value.Length;
             var text = m.Groups[2].Value;
             return level switch
             {
-                1 => $"[bold #75c9fa]{text}[/]",
-                2 => $"[bold #75c9fa]{text}[/]",
-                3 => $"[#75c9fa]{text}[/]",
-                _ => $"[#528bbc]{text}[/]"
+                1 => $"[bold {t.MarkdownHeaderColor}]{text}[/]",
+                2 => $"[bold {t.MarkdownHeaderColor}]{text}[/]",
+                3 => $"[{t.MarkdownHeaderColor}]{text}[/]",
+                _ => $"[{t.HeaderTextColor}]{text}[/]"
             };
         });
 
         // Bold: **text** → bold
         result = BoldRegex().Replace(result, "[bold]$1[/]");
 
-        // Code: `text` → purple
-        result = CodeRegex().Replace(result, "[#e19df5]$1[/]");
+        // Code: `text` → inline code color
+        result = CodeRegex().Replace(result, $"[{t.InlineCodeColor}]$1[/]");
 
         return result;
     }

@@ -156,7 +156,7 @@ public sealed class SwarmUI : IDisposable
         {
             lock (_lock)
             {
-                AddStatusInternal($"[#e5c07b]{a.Name} restarted (count: {a.RestartCount})[/]");
+                AddStatusInternal($"[{Theme.Current.WarningColor}]{a.Name} restarted (count: {a.RestartCount})[/]");
                 _agentsDirty = true;
                 if (_selectedItemId == a.Id)
                 {
@@ -280,7 +280,7 @@ public sealed class SwarmUI : IDisposable
 
     private void AddStatusInternal(string message)
     {
-        _statusMessages.Add($"[#5c6370]{DateTime.Now:HH:mm:ss}[/] {message}");
+        _statusMessages.Add($"[{Theme.Current.DimTextColor}]{DateTime.Now:HH:mm:ss}[/] {message}");
         while (_statusMessages.Count > MaxStatusMessages)
         {
             _statusMessages.RemoveAt(0);
@@ -484,7 +484,7 @@ public sealed class SwarmUI : IDisposable
                                 if (agent != null && agent.IsRunning)
                                 {
                                     agent.Restart();
-                                    AddStatusInternal($"[#e5c07b]Manual restart: {agent.Name}[/]");
+                                    AddStatusInternal($"[{Theme.Current.WarningColor}]Manual restart: {agent.Name}[/]");
                                     _agentsDirty = true;
                                     _logDirty = true;
                                 }
@@ -595,19 +595,14 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildHeader()
     {
-        var sessionText = $"[#5c6370]{_session.SessionId}[/]";
-        string content;
-        if (_autopilot)
-        {
-            content = $"[bold #61afef]SWARM[/] {sessionText} [#e5c07b]Autopilot[/]";
-        }
-        else
-        {
-            var roundText = _totalRounds > 0 ? $"Round [#61afef]{_currentRound}[/]/[#5c6370]{_totalRounds}[/]" : "";
-            var timeText = _remainingTime > TimeSpan.Zero ? $"[#e5c07b]{_remainingTime:mm\\:ss}[/] remaining" : "";
-            var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[#5c6370]│[/] {_currentPhase}" : "";
-            content = $"[bold #61afef]SWARM[/] {sessionText} {roundText} {timeText} {phaseText}";
-        }
+        var t = Theme.Current;
+        var sessionText = $"[{t.DimTextColor}]{_session.SessionId}[/]";
+        var modeText = _autopilot ? $"[{t.AccentTextColor}]Autopilot[/]" : _arenaMode ? $"[{t.AccentTextColor}]Arena[/]" : "";
+        var roundText = _totalRounds > 0 ? $"Round [{t.HeaderTextColor}]{_currentRound}[/]/[{t.DimTextColor}]{_totalRounds}[/]" : "";
+        var timeText = _remainingTime > TimeSpan.Zero ? $"[{t.AccentTextColor}]{_remainingTime:mm\\:ss}[/] remaining" : "";
+        var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[{t.DimTextColor}]│[/] {_currentPhase}" : "";
+
+        var content = $"[bold {t.HeaderTextColor}]SWARM[/] {sessionText} {modeText} {roundText} {timeText} {phaseText}";
 
         return new Panel(new Markup(content))
             .Border(BoxBorder.None)
@@ -616,18 +611,26 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildStatusPanel()
     {
+        var t = Theme.Current;
         var content = _statusMessages.Count > 0
             ? string.Join("\n", _statusMessages)
-            : "[#5c6370]No status messages[/]";
+            : $"[{t.DimTextColor}]No status messages[/]";
 
         return new Panel(new Markup(content))
             .Header("[bold]Status[/]")
-            .BorderColor(new Color(92, 99, 112))
+            .BorderColor(ParseColor(t.BorderColor))
             .Expand();
+    }
+
+    private static Color ParseColor(string hex)
+    {
+        var value = Convert.ToInt32(hex.TrimStart('#'), 16);
+        return new Color((byte)((value >> 16) & 0xFF), (byte)((value >> 8) & 0xFF), (byte)(value & 0xFF));
     }
 
     private Panel BuildAgentList()
     {
+        var t = Theme.Current;
         var table = new Table()
             .Border(TableBorder.None)
             .HideHeaders()
@@ -645,25 +648,25 @@ public sealed class SwarmUI : IDisposable
                 // Session row - parent of the tree
                 var sessionName = isSelected
                     ? $"[bold reverse] {_session.SessionId} [/]"
-                    : $" [#e5c07b]{_session.SessionId}[/]";
-                table.AddRow("[#5c6370]─[/]", " ", sessionName);
+                    : $" [{t.AccentTextColor}]{_session.SessionId}[/]";
+                table.AddRow($"[{t.DimTextColor}]─[/]", " ", sessionName);
             }
             else if (itemId == "todo")
             {
                 // Todo file row - child of session
                 var todoName = isSelected
                     ? $"[bold reverse] {_session.Options.Todo} [/]"
-                    : $" [#5c6370]{_session.Options.Todo}[/]";
-                table.AddRow("[#5c6370]│[/]", " ", todoName);
+                    : $" [{t.DimTextColor}]{_session.Options.Todo}[/]";
+                table.AddRow($"[{t.DimTextColor}]│[/]", " ", todoName);
             }
             else if (itemId.StartsWith("completed:"))
             {
                 // Completed worker row - show as file item with checkmark
                 var workerNumber = int.Parse(itemId.Split(':')[1]);
                 var name = isSelected
-                    ? $"[bold reverse] Worker {workerNumber} [/][#5c6370](completed)[/]"
-                    : $" [#5c6370]Worker {workerNumber}[/] [#5c6370](completed)[/]";
-                table.AddRow("[#5c6370]│[/]", "[#98c379]✓[/]", name);
+                    ? $"[bold reverse] Worker {workerNumber} [/][{t.DimTextColor}](completed)[/]"
+                    : $" [{t.DimTextColor}]Worker {workerNumber}[/] [{t.DimTextColor}](completed)[/]";
+                table.AddRow($"[{t.DimTextColor}]│[/]", $"[{t.SuccessColor}]✓[/]", name);
             }
             else
             {
@@ -675,34 +678,35 @@ public sealed class SwarmUI : IDisposable
                 var spinnerFrame = displayState?.SpinnerFrame ?? 0;
 
                 var statusIcon = agent.IsRunning
-                    ? $"[#98c379]{SpinnerFrames[spinnerFrame]}[/]"
-                    : "[#e06c75]○[/]";
+                    ? $"[{t.SuccessColor}]{SpinnerFrames[spinnerFrame]}[/]"
+                    : $"[{t.ErrorColor}]○[/]";
 
-                var restartInfo = agent.RestartCount > 0 ? $" [#5c6370](r{agent.RestartCount})[/]" : "";
+                var restartInfo = agent.RestartCount > 0 ? $" [{t.DimTextColor}](r{agent.RestartCount})[/]" : "";
                 var cliName = Path.GetFileNameWithoutExtension(agent.Cli.FileName);
-                var modelInfo = agent.ModelName != null ? $" [#5c6370]{agent.ModelName}[/]" : "";
+                var modelInfo = agent.ModelName != null ? $" [{t.DimTextColor}]{agent.ModelName}[/]" : "";
 
                 var name = isSelected
-                    ? $"[bold reverse] {agent.Name} [/][#d19a66]{cliName}[/]{modelInfo}{restartInfo}"
-                    : $" {agent.Name} [#d19a66]{cliName}[/]{modelInfo}{restartInfo}";
+                    ? $"[bold reverse] {agent.Name} [/][{t.CodeTextColor}]{cliName}[/]{modelInfo}{restartInfo}"
+                    : $" {agent.Name} [{t.CodeTextColor}]{cliName}[/]{modelInfo}{restartInfo}";
 
-                table.AddRow("[#5c6370]│[/]", statusIcon, name);
+                table.AddRow($"[{t.DimTextColor}]│[/]", statusIcon, name);
             }
         }
 
-        var focusIndicator = _focus == FocusPanel.Agents ? "[#61afef]●[/] " : "";
-        var borderColor = _focus == FocusPanel.Agents ? new Color(97, 175, 239) : new Color(92, 99, 112);
+        var focusIndicator = _focus == FocusPanel.Agents ? $"[{t.FocusColor}]●[/] " : "";
+        var borderColor = _focus == FocusPanel.Agents ? ParseColor(t.FocusColor) : ParseColor(t.BorderColor);
 
         return new Panel(table)
-            .Header($"{focusIndicator}[bold]Session[/] [#5c6370](Tab, ↑/↓, r=restart, q)[/]")
+            .Header($"{focusIndicator}[bold]Session[/] [{t.DimTextColor}](Tab, ↑/↓, r=restart, q)[/]")
             .BorderColor(borderColor)
             .Expand();
     }
 
     private Panel BuildLogPanelWithContent(string? selectedItemId, AgentBase? agent, AgentDisplayState? displayState, string content, int scrollOffset, FocusPanel focus)
     {
-        var focusIndicator = focus == FocusPanel.Log ? "[#61afef]●[/] " : "";
-        var borderColor = focus == FocusPanel.Log ? new Color(97, 175, 239) : new Color(92, 99, 112);
+        var t = Theme.Current;
+        var focusIndicator = focus == FocusPanel.Log ? $"[{t.FocusColor}]●[/] " : "";
+        var borderColor = focus == FocusPanel.Log ? ParseColor(t.FocusColor) : ParseColor(t.BorderColor);
 
         // Handle session selection
         if (selectedItemId == "session")
@@ -718,7 +722,7 @@ public sealed class SwarmUI : IDisposable
                 [bold]Supervisor:[/] {_session.Options.SupervisorType}
                 [bold]Mode:[/] {(_session.Options.Autopilot ? "Autopilot" : _session.Options.Arena ? "Arena" : "Standard")}
 
-                [#5c6370]Use --resume {_session.SessionId} to resume this session[/]
+                [{t.DimTextColor}]Use --resume {_session.SessionId} to resume this session[/]
                 """;
 
             return new Panel(new Markup(sessionInfo))
@@ -733,7 +737,7 @@ public sealed class SwarmUI : IDisposable
             var visibleLines = Math.Max(10, Console.WindowHeight - 10);
             var todoContent = _todoDisplayState.GetDisplay(visibleLines, scrollOffset);
             var todoLineCount = _todoDisplayState.LineCount;
-            var todoScrollInfo = scrollOffset > 0 ? $" [#d19a66]↑{scrollOffset}[/]" : "";
+            var todoScrollInfo = scrollOffset > 0 ? $" [{t.CodeTextColor}]↑{scrollOffset}[/]" : "";
 
             IRenderable todoRenderable;
             try
@@ -746,7 +750,7 @@ public sealed class SwarmUI : IDisposable
             }
 
             return new Panel(todoRenderable)
-                .Header($"{focusIndicator}[bold]{_session.Options.Todo}[/] [#5c6370]({todoLineCount} lines)[/]{todoScrollInfo}")
+                .Header($"{focusIndicator}[bold]{_session.Options.Todo}[/] [{t.DimTextColor}]({todoLineCount} lines)[/]{todoScrollInfo}")
                 .BorderColor(borderColor)
                 .Expand();
         }
@@ -760,7 +764,7 @@ public sealed class SwarmUI : IDisposable
                 var visibleLines = Math.Max(10, Console.WindowHeight - 10);
                 var completedLogContent = completedState.GetDisplay(visibleLines, scrollOffset);
                 var completedLineCount = completedState.LineCount;
-                var completedScrollInfo = scrollOffset > 0 ? $" [#d19a66]↑{scrollOffset}[/]" : "";
+                var completedScrollInfo = scrollOffset > 0 ? $" [{t.CodeTextColor}]↑{scrollOffset}[/]" : "";
 
                 IRenderable completedRenderable;
                 try
@@ -773,7 +777,7 @@ public sealed class SwarmUI : IDisposable
                 }
 
                 return new Panel(completedRenderable)
-                    .Header($"{focusIndicator}[bold]Worker {workerNumber}[/] - [#98c379]Completed[/] [#5c6370]({completedLineCount} lines)[/]{completedScrollInfo}")
+                    .Header($"{focusIndicator}[bold]Worker {workerNumber}[/] - [{t.SuccessColor}]Completed[/] [{t.DimTextColor}]({completedLineCount} lines)[/]{completedScrollInfo}")
                     .BorderColor(borderColor)
                     .Expand();
             }
@@ -782,19 +786,19 @@ public sealed class SwarmUI : IDisposable
         // Handle no selection
         if (agent == null)
         {
-            return new Panel("[#5c6370]Select an item to view details[/]")
+            return new Panel($"[{t.DimTextColor}]Select an item to view details[/]")
                 .Header("[bold]Log Output[/]")
-                .BorderColor(new Color(92, 99, 112))
+                .BorderColor(ParseColor(t.BorderColor))
                 .Expand();
         }
 
         // Handle agent selection - show log
         var lineCount = displayState?.LineCount ?? 0;
-        var statusText = agent.IsRunning ? "[#98c379]Running[/]" : "[#e06c75]Stopped[/]";
+        var statusText = agent.IsRunning ? $"[{t.SuccessColor}]Running[/]" : $"[{t.ErrorColor}]Stopped[/]";
         var timeStamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-        var scrollInfo = scrollOffset > 0 ? $" [#d19a66]↑{scrollOffset}[/]" : "";
+        var scrollInfo = scrollOffset > 0 ? $" [{t.CodeTextColor}]↑{scrollOffset}[/]" : "";
 
-        var headerText = $"{focusIndicator}[bold]{agent.Name}[/] - {statusText} - [#5c6370]{agent.Cli.FileName}[/] - [#5c6370]{timeStamp} ({lineCount} lines)[/]{scrollInfo}";
+        var headerText = $"{focusIndicator}[bold]{agent.Name}[/] - {statusText} - [{t.DimTextColor}]{agent.Cli.FileName}[/] - [{t.DimTextColor}]{timeStamp} ({lineCount} lines)[/]{scrollInfo}";
 
         IRenderable logContent;
         try
