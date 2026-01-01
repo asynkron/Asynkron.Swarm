@@ -42,9 +42,34 @@ public sealed class WorkerAgent(
         AddMessage(message);
     }
 
+    // Codex models: full name for API, short name for display
+    private static readonly (string Model, string Display)[] CodexModels =
+    [
+        ("gpt-5.2-codex", "5.2-cdx"),
+        ("gpt-5.1-codex-max", "5.1-max"),
+        ("gpt-5.2", "5.2")
+    ];
+
+    // Claude model
+    private const string ClaudeModel = "opus";
+
+    public override string? ModelName => GetDisplayModel();
+
+    private string? GetDisplayModel()
+    {
+        if (Cli is CodexCli)
+            return CodexModels[agentNumber % CodexModels.Length].Display;
+        if (Cli is ClaudeCli)
+            return ClaudeModel;
+        return null;
+    }
+
     private string? GetModel()
     {
-        // Use gpt-5.2-codex for Codex workers
-        return Cli is CodexCli ? "gpt-5.2-codex" : null;
+        if (Cli is CodexCli)
+            return CodexModels[agentNumber % CodexModels.Length].Model;
+        if (Cli is ClaudeCli)
+            return ClaudeModel;
+        return null;
     }
 }

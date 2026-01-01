@@ -39,7 +39,6 @@ public sealed class SwarmUI : IDisposable
 
     private const int RefreshMs = 10;
     private const int MaxStatusMessages = 10;
-    private const int LogDisplayLines = 50;
 
     // Layout structure - recreated on resize
     private Layout _layout = null!;
@@ -289,59 +288,78 @@ public sealed class SwarmUI : IDisposable
             _lastConsoleWidth = Console.WindowWidth;
             _lastConsoleHeight = Console.WindowHeight;
 
-            // Outer loop restarts Live context on resize
+            // Outer loop restarts Live context on resize or error
             while (!token.IsCancellationRequested)
             {
-                // Create fresh layout for current dimensions
-                _layout = CreateLayout();
-                _headerDirty = true;
-                _statusDirty = true;
-                _agentsDirty = true;
-                _logDirty = true;
-                _cachedHeader = null;
-                _cachedStatus = null;
-                _cachedAgents = null;
-                _cachedLog = null;
-                _cachedLogVersion = -1;
+                try
+                {
+                    // Create fresh layout for current dimensions
+                    _layout = CreateLayout();
+                    _headerDirty = true;
+                    _statusDirty = true;
+                    _agentsDirty = true;
+                    _logDirty = true;
+                    _cachedHeader = null;
+                    _cachedStatus = null;
+                    _cachedAgents = null;
+                    _cachedLog = null;
+                    _cachedLogVersion = -1;
 
-                UpdateLayoutRegions();
-                AnsiConsole.Clear();
+                    UpdateLayoutRegions();
+                    AnsiConsole.Clear();
 
-                var needRestart = false;
+                    var needRestart = false;
 
-                await AnsiConsole.Live(_layout)
-                    .AutoClear(false)
-                    .Overflow(VerticalOverflow.Ellipsis)
-                    .StartAsync(async ctx =>
-                    {
-                        while (!token.IsCancellationRequested && !needRestart)
+                    await AnsiConsole.Live(_layout)
+                        .AutoClear(false)
+                        .Overflow(VerticalOverflow.Crop)
+                        .Cropping(VerticalOverflowCropping.Top)
+                        .StartAsync(async ctx =>
                         {
-                            // Detect console resize
-                            var currentWidth = Console.WindowWidth;
-                            var currentHeight = Console.WindowHeight;
-                            if (_resizePending || currentWidth != _lastConsoleWidth || currentHeight != _lastConsoleHeight)
+                            while (!token.IsCancellationRequested && !needRestart)
                             {
-                                _resizePending = false;
-                                _lastConsoleWidth = currentWidth;
-                                _lastConsoleHeight = currentHeight;
+                                try
+                                {
+                                    // Detect console resize
+                                    var currentWidth = Console.WindowWidth;
+                                    var currentHeight = Console.WindowHeight;
+                                    if (_resizePending || currentWidth != _lastConsoleWidth || currentHeight != _lastConsoleHeight)
+                                    {
+                                        _resizePending = false;
+                                        _lastConsoleWidth = currentWidth;
+                                        _lastConsoleHeight = currentHeight;
 
-                                // Break out to restart Live context with new dimensions
-                                needRestart = true;
-                                return;
+                                        // Break out to restart Live context with new dimensions
+                                        needRestart = true;
+                                        return;
+                                    }
+
+                                    // Tick all agents (crash detection, auto-restart)
+                                    foreach (var agent in _registry.GetAll())
+                                    {
+                                        try { agent.Tick(); } catch { /* ignore tick errors */ }
+                                    }
+
+                                    UpdateLayoutRegions();
+                                    ctx.UpdateTarget(_layout);
+                                    ctx.Refresh();
+                                }
+                                catch
+                                {
+                                    // Frame failed - trigger restart to recover
+                                    needRestart = true;
+                                    return;
+                                }
+
+                                await Task.Delay(RefreshMs, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                             }
-
-                            // Tick all agents (crash detection, auto-restart)
-                            foreach (var agent in _registry.GetAll())
-                            {
-                                agent.Tick();
-                            }
-
-                            UpdateLayoutRegions();
-                            ctx.UpdateTarget(_layout);
-                            ctx.Refresh();
-                            await Task.Delay(RefreshMs, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-                        }
-                    });
+                        });
+                }
+                catch
+                {
+                    // Live context failed - wait briefly and retry
+                    await Task.Delay(100, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                }
             }
         }
         catch (Exception ex)
@@ -461,7 +479,6 @@ public sealed class SwarmUI : IDisposable
         // Gather state under lock, but do expensive work outside
         bool needHeader, needAgents, needStatus, needLog;
         string? selectedAgentId;
-        AgentBase? selectedAgent;
         AgentDisplayState? displayState;
         int logScrollOffset;
         FocusPanel focus;
@@ -484,47 +501,65 @@ public sealed class SwarmUI : IDisposable
             _logDirty = false;
         }
 
-        selectedAgent = selectedAgentId != null ? _registry.Get(selectedAgentId) : null;
+        var selectedAgent = selectedAgentId != null ? _registry.Get(selectedAgentId) : null;
 
-        // Build panels outside the lock
+        // Build panels outside the lock - each wrapped to prevent cascade failures
         if (needHeader)
         {
-            _cachedHeader = BuildHeader();
+            try { _cachedHeader = BuildHeader(); }
+            catch { /* keep previous cached value */ }
         }
 
         if (needAgents)
         {
-            _cachedAgents = BuildAgentList();
+            try { _cachedAgents = BuildAgentList(); }
+            catch { /* keep previous cached value */ }
         }
 
         if (needStatus)
         {
-            _cachedStatus = BuildStatusPanel();
+            try { _cachedStatus = BuildStatusPanel(); }
+            catch { /* keep previous cached value */ }
         }
 
         if (needLog)
         {
-            // Only rebuild if version, scroll, or focus actually changed
-            var version = displayState?.Version ?? 0;
-            if (version != _cachedLogVersion || logScrollOffset != _cachedLogScrollOffset || focus != _cachedLogFocus || _cachedLog == null)
+            try
             {
-                _cachedLogVersion = version;
-                _cachedLogScrollOffset = logScrollOffset;
-                _cachedLogFocus = focus;
-                var content = displayState?.GetDisplay(LogDisplayLines, logScrollOffset) ?? "[Waiting for output...]";
-                _cachedLog = BuildLogPanelWithContent(selectedAgent, displayState, content, logScrollOffset, focus);
+                // Only rebuild if version, scroll, or focus actually changed
+                var version = displayState?.Version ?? 0;
+                if (version != _cachedLogVersion || logScrollOffset != _cachedLogScrollOffset || focus != _cachedLogFocus || _cachedLog == null)
+                {
+                    _cachedLogVersion = version;
+                    _cachedLogScrollOffset = logScrollOffset;
+                    _cachedLogFocus = focus;
+
+                    // Calculate available lines based on terminal height
+                    // Layout: Header (3) + Main area, Log panel has 2 lines for borders
+                    var availableLines = Math.Max(5, _lastConsoleHeight - 3 - 2);
+                    var content = displayState?.GetDisplay(availableLines, logScrollOffset) ?? "[Waiting for output...]";
+                    _cachedLog = BuildLogPanelWithContent(selectedAgent, displayState, content, logScrollOffset, focus);
+                }
             }
+            catch { /* keep previous cached value */ }
         }
 
-        // Update layout (this should be fast)
-        if (_cachedHeader != null)
-            _layout["Header"].Update(_cachedHeader);
-        if (_cachedAgents != null)
-            _layout["Main"]["Left"]["Agents"].Update(_cachedAgents);
-        if (_cachedStatus != null)
-            _layout["Main"]["Left"]["Status"].Update(_cachedStatus);
-        if (_cachedLog != null)
-            _layout["Main"]["Log"].Update(_cachedLog);
+        // Update layout - wrap each to prevent partial failures
+        try
+        {
+            if (_cachedHeader != null)
+                _layout["Header"].Update(_cachedHeader);
+            if (_cachedAgents != null)
+                _layout["Main"]["Left"]["Agents"].Update(_cachedAgents);
+            if (_cachedStatus != null)
+                _layout["Main"]["Left"]["Status"].Update(_cachedStatus);
+            if (_cachedLog != null)
+                _layout["Main"]["Log"].Update(_cachedLog);
+        }
+        catch
+        {
+            // Layout update failed - will recover on next frame or resize
+        }
     }
 
     private Panel BuildHeader()
@@ -587,9 +622,11 @@ public sealed class SwarmUI : IDisposable
             var kindIcon = agent is SupervisorAgent ? "[#c678dd]S[/]" : "[#61afef]W[/]";
 
             var restartInfo = agent.RestartCount > 0 ? $" [#5c6370](r{agent.RestartCount})[/]" : "";
+            var cliName = Path.GetFileNameWithoutExtension(agent.Cli.FileName);
+            var modelInfo = agent.ModelName != null ? $" [#5c6370]{agent.ModelName}[/]" : "";
             var name = isSelected
-                ? $"[bold reverse] {kindIcon} {agent.Name}{restartInfo} [/]"
-                : $" {kindIcon} {agent.Name}{restartInfo}";
+                ? $"[bold reverse] {kindIcon} {agent.Name} [/][#d19a66]{cliName}[/]{modelInfo}{restartInfo}"
+                : $" {kindIcon} {agent.Name} [#d19a66]{cliName}[/]{modelInfo}{restartInfo}";
 
             table.AddRow(statusIcon, name);
         }
@@ -608,7 +645,7 @@ public sealed class SwarmUI : IDisposable
             .Expand();
     }
 
-    private Panel BuildLogPanelWithContent(AgentBase? agent, AgentDisplayState? displayState, string content, int scrollOffset, FocusPanel focus)
+    private static Panel BuildLogPanelWithContent(AgentBase? agent, AgentDisplayState? displayState, string content, int scrollOffset, FocusPanel focus)
     {
         if (agent == null)
         {
@@ -630,7 +667,7 @@ public sealed class SwarmUI : IDisposable
         IRenderable logContent;
         try
         {
-            logContent = new Markup(content);
+            logContent = new Markup(content).Overflow(Overflow.Fold);
         }
         catch
         {

@@ -16,6 +16,9 @@ public abstract class AgentBase : IDisposable
     // CLI abstraction
     public AgentCliBase Cli { get; }
 
+    // Model name for display (override in subclass)
+    public virtual string? ModelName => null;
+
     // State
     private Process? Process { get; set; }
     private AgentMessageStream? MessageStream { get; set; }

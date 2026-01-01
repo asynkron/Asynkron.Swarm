@@ -86,9 +86,20 @@ public sealed class SupervisorAgent(
         return null;
     }
 
-    private string? GetModel()
+    private const string ClaudeModel = "sonnet";
+    private const string CodexModel = "gpt-5.1-codex-mini";
+
+    public override string? ModelName => Cli switch
     {
-        // Use cheaper model for Codex supervisor
-        return Cli is CodexCli ? "gpt-5.1-codex-mini" : null;
-    }
+        ClaudeCli => ClaudeModel,
+        CodexCli => "5.1-mini",
+        _ => null
+    };
+
+    private string? GetModel() => Cli switch
+    {
+        ClaudeCli => ClaudeModel,
+        CodexCli => CodexModel,
+        _ => null
+    };
 }
