@@ -15,7 +15,6 @@
 
     <!-- Package Metadata -->
     <PackageId>Asynkron.Swarm</PackageId>
-    <Version>1.0.0</Version>
     <Authors>Asynkron</Authors>
     <Description>AI Agent Swarm Orchestrator - Run multiple AI coding agents in parallel on git worktrees</Description>
     <PackageProjectUrl>https://github.com/asynkron/Asynkron.Swarm</PackageProjectUrl>
