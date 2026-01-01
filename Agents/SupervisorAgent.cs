@@ -6,19 +6,17 @@ using Asynkron.Swarm.Prompts;
 namespace Asynkron.Swarm.Agents;
 
 public sealed class SupervisorAgent(
-    int round,
     List<string> worktreePaths,
     List<string> workerLogPaths,
     string repoPath,
     AgentCliBase cli,
-    string logDir,
+    string logPath,
     int restartCount = 0,
     bool autopilot = false)
-    : AgentBase(id: $"round{round}-supervisor",
+    : AgentBase(id: "supervisor",
         name: "Supervisor",
         cli: cli,
-        logPath: Path.Combine(logDir, $"round{round}-supervisor.log"),
-        round: round,
+        logPath: logPath,
         restartCount: restartCount)
 {
 

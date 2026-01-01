@@ -2,29 +2,17 @@ using System.Diagnostics;
 
 namespace Asynkron.Swarm.Services;
 
-public class WorktreeService
+public static class WorktreeService
 {
-    private readonly string _baseDir;
-
-    public WorktreeService()
+    public static async Task<List<string>> CreateWorktreesAsync(string repoPath, List<string> worktreePaths)
     {
-        _baseDir = Path.Combine(Path.GetTempPath(), "swarm-worktrees");
-        Directory.CreateDirectory(_baseDir);
-    }
-
-    public async Task<List<string>> CreateWorktreesAsync(string repoPath, int round, int count)
-    {
-        var worktrees = new List<string>();
         var absoluteRepoPath = Path.GetFullPath(repoPath);
 
         // Prune stale worktree entries from previous crashes
         await RunGitAsync(absoluteRepoPath, "worktree prune");
 
-        for (var i = 1; i <= count; i++)
+        foreach (var worktreePath in worktreePaths)
         {
-            var worktreeName = $"round{round}-agent{i}";
-            var worktreePath = Path.Combine(_baseDir, worktreeName);
-
             // Remove if exists from previous failed run
             if (Directory.Exists(worktreePath))
             {
@@ -37,11 +25,9 @@ public class WorktreeService
             {
                 throw new InvalidOperationException($"Failed to create worktree: {result.Error}");
             }
-
-            worktrees.Add(worktreePath);
         }
 
-        return worktrees;
+        return worktreePaths;
     }
 
     public static async Task DeleteWorktreesAsync(string repoPath, List<string> worktreePaths)

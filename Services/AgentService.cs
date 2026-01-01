@@ -4,19 +4,9 @@ using Asynkron.Swarm.Models;
 
 namespace Asynkron.Swarm.Services;
 
-public class AgentService
+public class AgentService(AgentRegistry registry, SwarmSession session)
 {
-    private readonly AgentRegistry _registry;
-    private readonly string _logDir;
-
-    public string LogDir => _logDir;
-
-    public AgentService(AgentRegistry registry)
-    {
-        _registry = registry;
-        _logDir = Path.Combine(Path.GetTempPath(), "swarm-logs");
-        Directory.CreateDirectory(_logDir);
-    }
+    public SwarmSession Session => session;
 
     public static AgentCliBase CreateCli(AgentType agentType)
     {
@@ -31,9 +21,7 @@ public class AgentService
     }
 
     public WorkerAgent CreateWorker(
-        int round,
         int agentNumber,
-        string worktreePath,
         string todoFile,
         AgentType agentType,
         bool autopilot = false,
@@ -41,22 +29,19 @@ public class AgentService
     {
         var cli = CreateCli(agentType);
         var worker = new WorkerAgent(
-            round,
             agentNumber,
-            worktreePath,
+            session.GetWorktreePath(agentNumber),
             todoFile,
             cli,
-            _logDir,
-            restartCount: 0,
+            session.GetWorkerLogPath(agentNumber),
             autopilot: autopilot,
             branchName: branchName);
 
-        _registry.Register(worker);
+        registry.Register(worker);
         return worker;
     }
 
     public SupervisorAgent CreateSupervisor(
-        int round,
         List<string> worktreePaths,
         List<string> workerLogPaths,
         string repoPath,
@@ -65,32 +50,30 @@ public class AgentService
     {
         var cli = CreateCli(agentType);
         var supervisor = new SupervisorAgent(
-            round,
             worktreePaths,
             workerLogPaths,
             repoPath,
             cli,
-            _logDir,
-            restartCount: 0,
+            session.GetSupervisorLogPath(),
             autopilot: autopilot);
 
-        _registry.Register(supervisor);
+        registry.Register(supervisor);
         return supervisor;
     }
 
     public void RemoveAgent(AgentBase agent)
     {
-        _registry.Unregister(agent.Id);
+        registry.Unregister(agent.Id);
     }
 
     public void RemoveAllAgents()
     {
-        _registry.Clear();
+        registry.Clear();
     }
 
     public async Task StopAllWorkersAsync()
     {
-        var workers = _registry.GetWorkers();
+        var workers = registry.GetWorkers();
 
         foreach (var worker in workers)
         {

@@ -6,20 +6,18 @@ using Asynkron.Swarm.Prompts;
 namespace Asynkron.Swarm.Agents;
 
 public sealed class WorkerAgent(
-    int round,
     int agentNumber,
     string worktreePath,
     string todoFile,
     AgentCliBase cli,
-    string logDir,
+    string logPath,
     int restartCount = 0,
     bool autopilot = false,
     string? branchName = null)
-    : AgentBase(id: $"round{round}-worker{agentNumber}",
+    : AgentBase(id: $"worker{agentNumber}",
         name: $"Worker {agentNumber}",
         cli: cli,
-        logPath: Path.Combine(logDir, $"round{round}-worker{agentNumber}.log"),
-        round: round,
+        logPath: logPath,
         restartCount: restartCount)
 {
 

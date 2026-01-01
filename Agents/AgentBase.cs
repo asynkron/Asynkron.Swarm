@@ -10,7 +10,6 @@ public abstract class AgentBase : IDisposable
     public string Id { get; }
     public string Name { get; }
     public string LogPath { get; }
-    public int Round { get; }
     public int RestartCount { get; private set; }
 
     // CLI abstraction
@@ -61,13 +60,12 @@ public abstract class AgentBase : IDisposable
     // Override in subclass to prevent restart on clean exit (e.g., workers)
     protected virtual bool RestartOnCleanExit => true;
 
-    protected AgentBase(string id, string name, AgentCliBase cli, string logPath, int round, int restartCount = 0)
+    protected AgentBase(string id, string name, AgentCliBase cli, string logPath, int restartCount = 0)
     {
         Id = id;
         Name = name;
         Cli = cli;
         LogPath = logPath;
-        Round = round;
         RestartCount = restartCount;
 
         // Subscribe to CLI messages

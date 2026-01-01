@@ -12,7 +12,9 @@ namespace Asynkron.Swarm.UI;
 public sealed class SwarmUI : IDisposable
 {
     private readonly AgentRegistry _registry;
+    private readonly bool _arenaMode;
     private readonly bool _autopilot;
+    private readonly string _sessionId;
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _lock = new();
 
@@ -63,10 +65,12 @@ public sealed class SwarmUI : IDisposable
     private int _lastConsoleHeight;
     private volatile bool _resizePending;
 
-    public SwarmUI(AgentRegistry registry, bool autopilot = false)
+    public SwarmUI(AgentRegistry registry, bool arenaMode = false, bool autopilot = false, string? sessionId = null)
     {
         _registry = registry;
+        _arenaMode = arenaMode;
         _autopilot = autopilot;
+        _sessionId = sessionId ?? "unknown";
 
         // Initialize with existing agents
         foreach (var agent in _registry.GetAll())
@@ -564,17 +568,18 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildHeader()
     {
+        var sessionText = $"[#5c6370]{_sessionId}[/]";
         string content;
         if (_autopilot)
         {
-            content = "[bold #61afef]SWARM[/] [#e5c07b]Autopilot[/]";
+            content = $"[bold #61afef]SWARM[/] {sessionText} [#e5c07b]Autopilot[/]";
         }
         else
         {
             var roundText = _totalRounds > 0 ? $"Round [#61afef]{_currentRound}[/]/[#5c6370]{_totalRounds}[/]" : "";
             var timeText = _remainingTime > TimeSpan.Zero ? $"[#e5c07b]{_remainingTime:mm\\:ss}[/] remaining" : "";
             var phaseText = !string.IsNullOrEmpty(_currentPhase) ? $"[#5c6370]│[/] {_currentPhase}" : "";
-            content = $"[bold #61afef]SWARM[/] {roundText} {timeText} {phaseText}";
+            content = $"[bold #61afef]SWARM[/] {sessionText} {roundText} {timeText} {phaseText}";
         }
 
         return new Panel(new Markup(content))
