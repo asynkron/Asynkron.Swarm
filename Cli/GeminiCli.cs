@@ -52,10 +52,21 @@ public class GeminiCli : AgentCliBase
             root.TryGetProperty("content", out var content))
         {
             var text = content.GetString() ?? "";
+            text = TrimTrailingWhitespacePerLine(text);
             if (!string.IsNullOrWhiteSpace(text))
                 return [new AgentMessage(AgentMessageKind.Say, text)];
         }
         return [];
+    }
+
+    private static string TrimTrailingWhitespacePerLine(string content)
+    {
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            lines[i] = lines[i].TrimEnd();
+        }
+        return string.Join('\n', lines);
     }
 
     private static AgentMessage[] ParseToolUse(JsonElement root)

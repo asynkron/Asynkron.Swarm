@@ -14,13 +14,14 @@ public sealed class SwarmUI : IDisposable
     private readonly AgentRegistry _registry;
     private readonly bool _arenaMode;
     private readonly bool _autopilot;
-    private readonly string _sessionId;
+    private readonly SwarmSession _session;
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _lock = new();
 
+    // Selection tracking - items can be: "session", "todo", or agent IDs
     private int _selectedIndex;
-    private string? _selectedAgentId;
-    private readonly List<string> _agentIds = [];
+    private string? _selectedItemId;
+    private readonly List<string> _itemIds = ["session", "todo"]; // Session and todo are always first
 
     // Focus and scroll state
     private enum FocusPanel { Agents, Log }
@@ -29,6 +30,9 @@ public sealed class SwarmUI : IDisposable
 
     // Display state per agent (now subscribes to agent's own stream)
     private readonly Dictionary<string, AgentDisplayState> _displayStates = new();
+
+    // Display state for todo file
+    private readonly FileDisplayState _todoDisplayState = new();
 
     private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -65,12 +69,12 @@ public sealed class SwarmUI : IDisposable
     private int _lastConsoleHeight;
     private volatile bool _resizePending;
 
-    public SwarmUI(AgentRegistry registry, bool arenaMode = false, bool autopilot = false, string? sessionId = null)
+    public SwarmUI(AgentRegistry registry, SwarmSession session, bool arenaMode = false, bool autopilot = false)
     {
         _registry = registry;
         _arenaMode = arenaMode;
         _autopilot = autopilot;
-        _sessionId = sessionId ?? "unknown";
+        _session = session;
 
         // Initialize with existing agents
         foreach (var agent in _registry.GetAll())
@@ -78,11 +82,13 @@ public sealed class SwarmUI : IDisposable
             SetupAgent(agent);
         }
 
-        if (_agentIds.Count > 0)
-        {
-            _selectedAgentId = _agentIds[0];
-            _selectedIndex = 0;
-        }
+        // Load todo file
+        var todoPath = Path.Combine(session.Options.Repo, session.Options.Todo);
+        _todoDisplayState.Load(todoPath);
+
+        // Default selection is the session
+        _selectedItemId = "session";
+        _selectedIndex = 0;
 
         _registry.AgentAdded += OnAgentAdded;
         _registry.AgentRemoved += OnAgentRemoved;
@@ -99,7 +105,7 @@ public sealed class SwarmUI : IDisposable
                 new Layout("Main"));
 
         layout["Main"].SplitColumns(
-            new Layout("Left").Size(40),
+            new Layout("Left").Size(50),
             new Layout("Log"));
 
         layout["Main"]["Left"].SplitRows(
@@ -111,7 +117,7 @@ public sealed class SwarmUI : IDisposable
 
     private void SetupAgent(AgentBase agent)
     {
-        _agentIds.Add(agent.Id);
+        _itemIds.Add(agent.Id);
 
         var displayState = new AgentDisplayState();
         _displayStates[agent.Id] = displayState;
@@ -135,7 +141,7 @@ public sealed class SwarmUI : IDisposable
                 displayState.AddLine(msg.Formatted);
 
                 // Mark UI dirty
-                if (_selectedAgentId == agent.Id)
+                if (_selectedItemId == agent.Id)
                 {
                     _logDirty = true;
                 }
@@ -149,7 +155,7 @@ public sealed class SwarmUI : IDisposable
             {
                 AddStatusInternal($"[#e5c07b]{a.Name} restarted (count: {a.RestartCount})[/]");
                 _agentsDirty = true;
-                if (_selectedAgentId == a.Id)
+                if (_selectedItemId == a.Id)
                 {
                     _logDirty = true;
                 }
@@ -163,13 +169,6 @@ public sealed class SwarmUI : IDisposable
         {
             SetupAgent(agent);
             _agentsDirty = true;
-
-            if (_selectedAgentId == null)
-            {
-                _selectedAgentId = agent.Id;
-                _selectedIndex = 0;
-                _logDirty = true;
-            }
         }
     }
 
@@ -177,25 +176,25 @@ public sealed class SwarmUI : IDisposable
     {
         lock (_lock)
         {
-            var index = _agentIds.IndexOf(agent.Id);
+            var index = _itemIds.IndexOf(agent.Id);
             if (index < 0)
             {
                 return;
             }
 
-            _agentIds.RemoveAt(index);
+            _itemIds.RemoveAt(index);
 
             _displayStates.Remove(agent.Id);
 
             _agentsDirty = true;
 
-            if (_selectedAgentId != agent.Id)
+            if (_selectedItemId != agent.Id)
             {
                 return;
             }
 
-            _selectedIndex = Math.Max(0, Math.Min(_selectedIndex, _agentIds.Count - 1));
-            _selectedAgentId = _agentIds.Count > 0 ? _agentIds[_selectedIndex] : null;
+            _selectedIndex = Math.Max(0, Math.Min(_selectedIndex, _itemIds.Count - 1));
+            _selectedItemId = _itemIds.Count > 0 ? _itemIds[_selectedIndex] : null;
             _logDirty = true;
         }
     }
@@ -205,7 +204,7 @@ public sealed class SwarmUI : IDisposable
         lock (_lock)
         {
             _agentsDirty = true;
-            if (_selectedAgentId == agent.Id)
+            if (_selectedItemId == agent.Id)
             {
                 _logDirty = true;
             }
@@ -403,7 +402,7 @@ public sealed class SwarmUI : IDisposable
                                 if (_selectedIndex > 0)
                                 {
                                     _selectedIndex--;
-                                    _selectedAgentId = _agentIds[_selectedIndex];
+                                    _selectedItemId = _itemIds[_selectedIndex];
                                     _logScrollOffset = 0;
                                     _agentsDirty = true;
                                     _logDirty = true;
@@ -420,10 +419,10 @@ public sealed class SwarmUI : IDisposable
                         case ConsoleKey.J:
                             if (_focus == FocusPanel.Agents)
                             {
-                                if (_selectedIndex < _agentIds.Count - 1)
+                                if (_selectedIndex < _itemIds.Count - 1)
                                 {
                                     _selectedIndex++;
-                                    _selectedAgentId = _agentIds[_selectedIndex];
+                                    _selectedItemId = _itemIds[_selectedIndex];
                                     _logScrollOffset = 0;
                                     _agentsDirty = true;
                                     _logDirty = true;
@@ -457,10 +456,10 @@ public sealed class SwarmUI : IDisposable
                             break;
 
                         case ConsoleKey.R:
-                            // Manual restart of selected agent
-                            if (_selectedAgentId != null)
+                            // Manual restart of selected agent (only if an agent is selected)
+                            if (_selectedItemId != null && _selectedItemId != "session" && _selectedItemId != "todo")
                             {
-                                var agent = _registry.Get(_selectedAgentId);
+                                var agent = _registry.Get(_selectedItemId);
                                 if (agent != null && agent.IsRunning)
                                 {
                                     agent.Restart();
@@ -482,7 +481,7 @@ public sealed class SwarmUI : IDisposable
     {
         // Gather state under lock, but do expensive work outside
         bool needHeader, needAgents, needStatus, needLog;
-        string? selectedAgentId;
+        string? selectedItemId;
         AgentDisplayState? displayState;
         int logScrollOffset;
         FocusPanel focus;
@@ -494,8 +493,11 @@ public sealed class SwarmUI : IDisposable
             needStatus = _statusDirty || _cachedStatus == null;
             needLog = _logDirty || _cachedLog == null;
 
-            selectedAgentId = _selectedAgentId;
-            displayState = selectedAgentId != null ? _displayStates.GetValueOrDefault(selectedAgentId) : null;
+            selectedItemId = _selectedItemId;
+            // Only get display state for agents, not session/todo
+            displayState = selectedItemId != null && selectedItemId != "session" && selectedItemId != "todo"
+                ? _displayStates.GetValueOrDefault(selectedItemId)
+                : null;
             logScrollOffset = _logScrollOffset;
             focus = _focus;
 
@@ -505,7 +507,10 @@ public sealed class SwarmUI : IDisposable
             _logDirty = false;
         }
 
-        var selectedAgent = selectedAgentId != null ? _registry.Get(selectedAgentId) : null;
+        // Get selected agent (null if session or todo is selected)
+        var selectedAgent = selectedItemId != null && selectedItemId != "session" && selectedItemId != "todo"
+            ? _registry.Get(selectedItemId)
+            : null;
 
         // Build panels outside the lock - each wrapped to prevent cascade failures
         if (needHeader)
@@ -542,7 +547,7 @@ public sealed class SwarmUI : IDisposable
                     // Layout: Header (3) + Main area, Log panel has 2 lines for borders
                     var availableLines = Math.Max(5, _lastConsoleHeight - 3 - 2);
                     var content = displayState?.GetDisplay(availableLines, logScrollOffset) ?? "[Waiting for output...]";
-                    _cachedLog = BuildLogPanelWithContent(selectedAgent, displayState, content, logScrollOffset, focus);
+                    _cachedLog = BuildLogPanelWithContent(selectedItemId, selectedAgent, displayState, content, logScrollOffset, focus);
                 }
             }
             catch { /* keep previous cached value */ }
@@ -568,7 +573,7 @@ public sealed class SwarmUI : IDisposable
 
     private Panel BuildHeader()
     {
-        var sessionText = $"[#5c6370]{_sessionId}[/]";
+        var sessionText = $"[#5c6370]{_session.SessionId}[/]";
         string content;
         if (_autopilot)
         {
@@ -604,68 +609,131 @@ public sealed class SwarmUI : IDisposable
         var table = new Table()
             .Border(TableBorder.None)
             .HideHeaders()
-            .AddColumn("Status", c => c.Width(3))
-            .AddColumn("Agent");
+            .AddColumn("Tree", c => c.Width(1))
+            .AddColumn("Status", c => c.Width(1))
+            .AddColumn("Item");
 
-        for (var i = 0; i < _agentIds.Count; i++)
+        for (var i = 0; i < _itemIds.Count; i++)
         {
-            var agentId = _agentIds[i];
-            var agent = _registry.Get(agentId);
-            if (agent == null)
-            {
-                continue;
-            }
-
-            var displayState = _displayStates.GetValueOrDefault(agentId);
-            var spinnerFrame = displayState?.SpinnerFrame ?? 0;
-
-            var statusIcon = agent.IsRunning
-                ? $"[#98c379]{SpinnerFrames[spinnerFrame]}[/]"
-                : "[#e06c75]○[/]";
-
+            var itemId = _itemIds[i];
             var isSelected = i == _selectedIndex;
-            var kindIcon = agent is SupervisorAgent ? "[#c678dd]S[/]" : "[#61afef]W[/]";
 
-            var restartInfo = agent.RestartCount > 0 ? $" [#5c6370](r{agent.RestartCount})[/]" : "";
-            var cliName = Path.GetFileNameWithoutExtension(agent.Cli.FileName);
-            var modelInfo = agent.ModelName != null ? $" [#5c6370]{agent.ModelName}[/]" : "";
-            var name = isSelected
-                ? $"[bold reverse] {kindIcon} {agent.Name} [/][#d19a66]{cliName}[/]{modelInfo}{restartInfo}"
-                : $" {kindIcon} {agent.Name} [#d19a66]{cliName}[/]{modelInfo}{restartInfo}";
+            if (itemId == "session")
+            {
+                // Session row - parent of the tree
+                var sessionName = isSelected
+                    ? $"[bold reverse] {_session.SessionId} [/]"
+                    : $" [#e5c07b]{_session.SessionId}[/]";
+                table.AddRow("[#5c6370]─[/]", " ", sessionName);
+            }
+            else if (itemId == "todo")
+            {
+                // Todo file row - child of session
+                var todoName = isSelected
+                    ? $"[bold reverse] {_session.Options.Todo} [/]"
+                    : $" [#5c6370]{_session.Options.Todo}[/]";
+                table.AddRow("[#5c6370]│[/]", " ", todoName);
+            }
+            else
+            {
+                // Agent row - child of session
+                var agent = _registry.Get(itemId);
+                if (agent == null) continue;
 
-            table.AddRow(statusIcon, name);
-        }
+                var displayState = _displayStates.GetValueOrDefault(itemId);
+                var spinnerFrame = displayState?.SpinnerFrame ?? 0;
 
-        if (table.Rows.Count == 0)
-        {
-            table.AddRow(" ", "[#5c6370]No agents running[/]");
+                var statusIcon = agent.IsRunning
+                    ? $"[#98c379]{SpinnerFrames[spinnerFrame]}[/]"
+                    : "[#e06c75]○[/]";
+
+                var restartInfo = agent.RestartCount > 0 ? $" [#5c6370](r{agent.RestartCount})[/]" : "";
+                var cliName = Path.GetFileNameWithoutExtension(agent.Cli.FileName);
+                var modelInfo = agent.ModelName != null ? $" [#5c6370]{agent.ModelName}[/]" : "";
+
+                var name = isSelected
+                    ? $"[bold reverse] {agent.Name} [/][#d19a66]{cliName}[/]{modelInfo}{restartInfo}"
+                    : $" {agent.Name} [#d19a66]{cliName}[/]{modelInfo}{restartInfo}";
+
+                table.AddRow("[#5c6370]│[/]", statusIcon, name);
+            }
         }
 
         var focusIndicator = _focus == FocusPanel.Agents ? "[#61afef]●[/] " : "";
         var borderColor = _focus == FocusPanel.Agents ? new Color(97, 175, 239) : new Color(92, 99, 112);
 
         return new Panel(table)
-            .Header($"{focusIndicator}[bold]Agents[/] [#5c6370](Tab, ↑/↓, r=restart, q)[/]")
+            .Header($"{focusIndicator}[bold]Session[/] [#5c6370](Tab, ↑/↓, r=restart, q)[/]")
             .BorderColor(borderColor)
             .Expand();
     }
 
-    private static Panel BuildLogPanelWithContent(AgentBase? agent, AgentDisplayState? displayState, string content, int scrollOffset, FocusPanel focus)
+    private Panel BuildLogPanelWithContent(string? selectedItemId, AgentBase? agent, AgentDisplayState? displayState, string content, int scrollOffset, FocusPanel focus)
     {
+        var focusIndicator = focus == FocusPanel.Log ? "[#61afef]●[/] " : "";
+        var borderColor = focus == FocusPanel.Log ? new Color(97, 175, 239) : new Color(92, 99, 112);
+
+        // Handle session selection
+        if (selectedItemId == "session")
+        {
+            var sessionInfo = $"""
+                [bold]Session ID:[/] {_session.SessionId}
+                [bold]Path:[/] {_session.SessionPath}
+                [bold]Repository:[/] {_session.Options.Repo}
+                [bold]Todo:[/] {_session.Options.Todo}
+                [bold]Created:[/] {_session.CreatedAt:yyyy-MM-dd HH:mm:ss}
+
+                [bold]Workers:[/] {_session.Options.ClaudeWorkers} Claude, {_session.Options.CodexWorkers} Codex, {_session.Options.CopilotWorkers} Copilot, {_session.Options.GeminiWorkers} Gemini
+                [bold]Supervisor:[/] {_session.Options.SupervisorType}
+                [bold]Mode:[/] {(_session.Options.Autopilot ? "Autopilot" : _session.Options.Arena ? "Arena" : "Standard")}
+
+                [#5c6370]Use --resume {_session.SessionId} to resume this session[/]
+                """;
+
+            return new Panel(new Markup(sessionInfo))
+                .Header($"{focusIndicator}[bold]Session Info[/]")
+                .BorderColor(borderColor)
+                .Expand();
+        }
+
+        // Handle todo selection - show file content with scroll support
+        if (selectedItemId == "todo")
+        {
+            var visibleLines = Math.Max(10, Console.WindowHeight - 10);
+            var todoContent = _todoDisplayState.GetDisplay(visibleLines, scrollOffset);
+            var todoLineCount = _todoDisplayState.LineCount;
+            var todoScrollInfo = scrollOffset > 0 ? $" [#d19a66]↑{scrollOffset}[/]" : "";
+
+            IRenderable todoRenderable;
+            try
+            {
+                todoRenderable = new Markup(Markup.Escape(todoContent)).Overflow(Overflow.Fold);
+            }
+            catch
+            {
+                todoRenderable = new Text(todoContent);
+            }
+
+            return new Panel(todoRenderable)
+                .Header($"{focusIndicator}[bold]{_session.Options.Todo}[/] [#5c6370]({todoLineCount} lines)[/]{todoScrollInfo}")
+                .BorderColor(borderColor)
+                .Expand();
+        }
+
+        // Handle no selection
         if (agent == null)
         {
-            return new Panel("[#5c6370]Select an agent to view logs[/]")
+            return new Panel("[#5c6370]Select an item to view details[/]")
                 .Header("[bold]Log Output[/]")
                 .BorderColor(new Color(92, 99, 112))
                 .Expand();
         }
 
+        // Handle agent selection - show log
         var lineCount = displayState?.LineCount ?? 0;
-
         var statusText = agent.IsRunning ? "[#98c379]Running[/]" : "[#e06c75]Stopped[/]";
         var timeStamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         var scrollInfo = scrollOffset > 0 ? $" [#d19a66]↑{scrollOffset}[/]" : "";
-        var focusIndicator = focus == FocusPanel.Log ? "[#61afef]●[/] " : "";
 
         var headerText = $"{focusIndicator}[bold]{agent.Name}[/] - {statusText} - [#5c6370]{agent.Cli.FileName}[/] - [#5c6370]{timeStamp} ({lineCount} lines)[/]{scrollInfo}";
 
@@ -678,10 +746,6 @@ public sealed class SwarmUI : IDisposable
         {
             logContent = new Text(content);
         }
-
-        var borderColor = focus == FocusPanel.Log
-            ? new Color(97, 175, 239)
-            : new Color(92, 99, 112);
 
         return new Panel(logContent)
             .Header(headerText)

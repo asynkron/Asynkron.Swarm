@@ -94,6 +94,7 @@ public class ClaudeCli : AgentCliBase
                 if (item.TryGetProperty("text", out var text))
                 {
                     var textContent = text.GetString() ?? "";
+                    textContent = TrimTrailingWhitespacePerLine(textContent);
                     if (!string.IsNullOrWhiteSpace(textContent))
                     {
                         yield return new AgentMessage(AgentMessageKind.Say, textContent);
@@ -165,5 +166,15 @@ public class ClaudeCli : AgentCliBase
                 yield return new AgentMessage(AgentMessageKind.See, output);
             }
         }
+    }
+
+    private static string TrimTrailingWhitespacePerLine(string content)
+    {
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            lines[i] = lines[i].TrimEnd();
+        }
+        return string.Join('\n', lines);
     }
 }

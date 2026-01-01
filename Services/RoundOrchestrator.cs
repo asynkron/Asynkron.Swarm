@@ -36,7 +36,6 @@ public class RoundOrchestrator
 
     public async Task RunAsync(SwarmOptions options, string? resumeSessionId = null)
     {
-        var absoluteRepoPath = Path.GetFullPath(options.Repo);
         var isResume = resumeSessionId != null;
 
         // Create or resume session
@@ -47,16 +46,19 @@ public class RoundOrchestrator
             {
                 throw new InvalidOperationException($"Session not found: {resumeSessionId}");
             }
+            // Use the session's saved options when resuming
+            options = _session.Options;
         }
         else
         {
             _session = SwarmSession.Create(options);
         }
 
+        var absoluteRepoPath = Path.GetFullPath(options.Repo);
         _agentService = new AgentService(_registry, _session);
 
         using var cts = new CancellationTokenSource();
-        _ui = new SwarmUI(_registry, options.Arena, options.Autopilot, _session.SessionId);
+        _ui = new SwarmUI(_registry, _session, options.Arena, options.Autopilot);
 
         // Start UI immediately
         var uiTask = _ui.RunAsync(cts.Token);

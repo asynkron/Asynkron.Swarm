@@ -103,6 +103,12 @@ public class SwarmSettings : CommandSettings
             return ValidationResult.Success();
         }
 
+        // Skip all validation if resuming - session has all the info we need
+        if (!string.IsNullOrEmpty(Resume))
+        {
+            return ValidationResult.Success();
+        }
+
         if (ClaudeWorkers < 0)
         {
             return ValidationResult.Error("Claude workers cannot be negative");
@@ -163,12 +169,6 @@ public class SwarmSettings : CommandSettings
         if (!File.Exists(todoPath))
         {
             return ValidationResult.Error($"Todo file not found: {todoPath}");
-        }
-
-        // Skip other validations if resuming
-        if (!string.IsNullOrEmpty(Resume))
-        {
-            return ValidationResult.Success();
         }
 
         return ValidationResult.Success();
