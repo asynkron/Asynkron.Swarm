@@ -28,7 +28,7 @@ public class Theme
     public string WarningColor { get; init; } = "#e5c07b";
 
     // Singleton for current theme
-    public static Theme Current { get; set; } = new();
+    public static Theme Current { get; set; } = OneDark;
 
     // Built-in themes
     public static Theme OneDark => new();
