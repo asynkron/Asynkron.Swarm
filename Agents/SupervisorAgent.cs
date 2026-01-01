@@ -21,20 +21,16 @@ public sealed class SupervisorAgent(
         round: round,
         restartCount: restartCount)
 {
-    private string RepoPath { get; } = repoPath;
-    private List<string> WorktreePaths { get; } = worktreePaths;
-    private List<string> WorkerLogPaths { get; } = workerLogPaths;
-    private bool Autopilot { get; } = autopilot;
 
     protected override Process SpawnProcess()
     {
-        var prompt = Autopilot
-            ? SupervisorPrompt.BuildAutopilot(WorktreePaths, WorkerLogPaths, RestartCount)
-            : SupervisorPrompt.Build(WorktreePaths, WorkerLogPaths, RepoPath, RestartCount);
+        var prompt = autopilot
+            ? SupervisorPrompt.BuildAutopilot(worktreePaths, workerLogPaths, RestartCount)
+            : SupervisorPrompt.Build(worktreePaths, workerLogPaths, repoPath, RestartCount);
         var arguments = Cli.BuildArguments(prompt, GetModel());
         var stdinContent = Cli.UseStdin ? prompt : null;
 
-        return StartProcess(Cli.FileName, arguments, RepoPath, stdinContent);
+        return StartProcess(Cli.FileName, arguments, repoPath, stdinContent);
     }
 
     protected override void HandleMessage(AgentMessage message)
@@ -60,33 +56,31 @@ public sealed class SupervisorAgent(
         var toolInput = message.ToolInput ?? "";
 
         // Check if accessing a worker's log file
-        for (var i = 0; i < WorkerLogPaths.Count; i++)
+        for (var i = 0; i < workerLogPaths.Count; i++)
         {
-            if (content.Contains(WorkerLogPaths[i]) || toolInput.Contains(WorkerLogPaths[i]))
+            if (content.Contains(workerLogPaths[i]) || toolInput.Contains(workerLogPaths[i]))
             {
                 return $"Reading logs for Worker {i + 1}";
             }
         }
 
         // Check if accessing a worker's worktree
-        for (var i = 0; i < WorktreePaths.Count; i++)
+        for (var i = 0; i < worktreePaths.Count; i++)
         {
-            if (content.Contains(WorktreePaths[i]) || toolInput.Contains(WorktreePaths[i]))
+            if (!content.Contains(worktreePaths[i]) && !toolInput.Contains(worktreePaths[i])) continue;
+            var action = message.ToolName switch
             {
-                var action = message.ToolName switch
-                {
-                    "Bash" when content.Contains("git status") => "Checking git status",
-                    "Bash" when content.Contains("git diff") => "Checking git diff",
-                    "Bash" when content.Contains("git log") => "Checking git log",
-                    "Bash" when content.Contains("git cherry-pick") => "Cherry-picking commits",
-                    "Bash" when content.Contains("git merge") => "Merging changes",
-                    "Read" => "Reading file",
-                    "Glob" => "Searching files",
-                    "Grep" => "Searching code",
-                    _ => "Inspecting"
-                };
-                return $"{action} for Worker {i + 1}";
-            }
+                "Bash" when content.Contains("git status") => "Checking git status",
+                "Bash" when content.Contains("git diff") => "Checking git diff",
+                "Bash" when content.Contains("git log") => "Checking git log",
+                "Bash" when content.Contains("git cherry-pick") => "Cherry-picking commits",
+                "Bash" when content.Contains("git merge") => "Merging changes",
+                "Read" => "Reading file",
+                "Glob" => "Searching files",
+                "Grep" => "Searching code",
+                _ => "Inspecting"
+            };
+            return $"{action} for Worker {i + 1}";
         }
 
         return null;

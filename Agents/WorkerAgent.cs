@@ -22,22 +22,18 @@ public sealed class WorkerAgent(
         round: round,
         restartCount: restartCount)
 {
-    public int AgentNumber { get; } = agentNumber;
-    public string WorktreePath { get; } = worktreePath;
-    public string TodoFile { get; } = todoFile;
-    public bool Autopilot { get; } = autopilot;
-    public string? BranchName { get; } = branchName;
+
 
     // Workers should not restart on clean exit (exit code 0)
     protected override bool RestartOnCleanExit => false;
 
     protected override Process SpawnProcess()
     {
-        var prompt = WorkerPrompt.Build(TodoFile, Name, RestartCount, Autopilot, BranchName, LogPath);
+        var prompt = WorkerPrompt.Build(todoFile, Name, RestartCount, autopilot, branchName, LogPath);
         var arguments = Cli.BuildArguments(prompt, GetModel());
         var stdinContent = Cli.UseStdin ? prompt : null;
 
-        return StartProcess(Cli.FileName, arguments, WorktreePath, stdinContent);
+        return StartProcess(Cli.FileName, arguments, worktreePath, stdinContent);
     }
 
     protected override void HandleMessage(AgentMessage message)
