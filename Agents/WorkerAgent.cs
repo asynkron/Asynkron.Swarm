@@ -20,7 +20,7 @@ public sealed class WorkerAgent(
         logPath: logPath,
         restartCount: restartCount)
 {
-
+    public int AgentNumber => agentNumber;
 
     // Workers should not restart on clean exit (exit code 0)
     protected override bool RestartOnCleanExit => false;

@@ -23,6 +23,7 @@ public abstract class AgentBase : IDisposable
     private AgentMessageStream? MessageStream { get; set; }
     public DateTimeOffset StartedAt { get; private set; }
     public bool IsRunning => Process is { HasExited: false };
+    public int? ExitCode => Process is { HasExited: true } ? Process.ExitCode : null;
 
     // Internal message buffer
     private readonly List<AgentMessage> _messages = [];

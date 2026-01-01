@@ -14,6 +14,9 @@ public class SwarmSession
     public SwarmOptions Options { get; init; } = null!;
     public DateTimeOffset CreatedAt { get; init; }
 
+    // Track completed workers (by worker number)
+    public List<int> CompletedWorkers { get; init; } = [];
+
     // Computed paths
     [JsonIgnore]
     public string ConfigPath => Path.Combine(SessionPath, "session.json");
@@ -80,6 +83,18 @@ public class SwarmSession
 
     public string GetSupervisorLogPath() =>
         Path.Combine(SessionPath, "supervisor.log");
+
+    public bool IsWorkerCompleted(int workerNumber) =>
+        CompletedWorkers.Contains(workerNumber);
+
+    public void MarkWorkerCompleted(int workerNumber)
+    {
+        if (!CompletedWorkers.Contains(workerNumber))
+        {
+            CompletedWorkers.Add(workerNumber);
+            Save();
+        }
+    }
 
     private static string GenerateSessionId()
     {

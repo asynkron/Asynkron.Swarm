@@ -34,6 +34,9 @@ public sealed class SwarmUI : IDisposable
     // Display state for todo file
     private readonly FileDisplayState _todoDisplayState = new();
 
+    // Display state for completed workers (worker number -> display state)
+    private readonly Dictionary<int, FileDisplayState> _completedWorkers = new();
+
     private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     // Status messages
@@ -254,6 +257,24 @@ public sealed class SwarmUI : IDisposable
         lock (_lock)
         {
             AddStatusInternal(message);
+        }
+    }
+
+    public void AddCompletedWorker(int workerNumber, string logPath)
+    {
+        lock (_lock)
+        {
+            var displayState = new FileDisplayState();
+            displayState.Load(logPath);
+            _completedWorkers[workerNumber] = displayState;
+
+            // Add to item list as "completed:N"
+            var itemId = $"completed:{workerNumber}";
+            if (!_itemIds.Contains(itemId))
+            {
+                _itemIds.Add(itemId);
+            }
+            _agentsDirty = true;
         }
     }
 
@@ -634,6 +655,15 @@ public sealed class SwarmUI : IDisposable
                     : $" [#5c6370]{_session.Options.Todo}[/]";
                 table.AddRow("[#5c6370]│[/]", " ", todoName);
             }
+            else if (itemId.StartsWith("completed:"))
+            {
+                // Completed worker row - show as file item with checkmark
+                var workerNumber = int.Parse(itemId.Split(':')[1]);
+                var name = isSelected
+                    ? $"[bold reverse] Worker {workerNumber} [/][#5c6370](completed)[/]"
+                    : $" [#5c6370]Worker {workerNumber}[/] [#5c6370](completed)[/]";
+                table.AddRow("[#5c6370]│[/]", "[#98c379]✓[/]", name);
+            }
             else
             {
                 // Agent row - child of session
@@ -718,6 +748,34 @@ public sealed class SwarmUI : IDisposable
                 .Header($"{focusIndicator}[bold]{_session.Options.Todo}[/] [#5c6370]({todoLineCount} lines)[/]{todoScrollInfo}")
                 .BorderColor(borderColor)
                 .Expand();
+        }
+
+        // Handle completed worker selection - show log file with scroll support
+        if (selectedItemId != null && selectedItemId.StartsWith("completed:"))
+        {
+            var workerNumber = int.Parse(selectedItemId.Split(':')[1]);
+            if (_completedWorkers.TryGetValue(workerNumber, out var completedState))
+            {
+                var visibleLines = Math.Max(10, Console.WindowHeight - 10);
+                var completedLogContent = completedState.GetDisplay(visibleLines, scrollOffset);
+                var completedLineCount = completedState.LineCount;
+                var completedScrollInfo = scrollOffset > 0 ? $" [#d19a66]↑{scrollOffset}[/]" : "";
+
+                IRenderable completedRenderable;
+                try
+                {
+                    completedRenderable = new Markup(Markup.Escape(completedLogContent)).Overflow(Overflow.Fold);
+                }
+                catch
+                {
+                    completedRenderable = new Text(completedLogContent);
+                }
+
+                return new Panel(completedRenderable)
+                    .Header($"{focusIndicator}[bold]Worker {workerNumber}[/] - [#98c379]Completed[/] [#5c6370]({completedLineCount} lines)[/]{completedScrollInfo}")
+                    .BorderColor(borderColor)
+                    .Expand();
+            }
         }
 
         // Handle no selection

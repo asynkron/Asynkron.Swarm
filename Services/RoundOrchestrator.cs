@@ -135,10 +135,21 @@ public class RoundOrchestrator
         var restartCount = isResume ? 1 : 0;
         for (var i = 0; i < worktreePaths.Count; i++)
         {
+            var workerNumber = i + 1;
+
+            // Skip completed workers on resume - show them as file items instead
+            if (isResume && _session!.IsWorkerCompleted(workerNumber))
+            {
+                var logPath = _session.GetWorkerLogPath(workerNumber);
+                _ui.AddCompletedWorker(workerNumber, logPath);
+                _ui.AddStatus($"[#5c6370]Worker {workerNumber} already completed[/]");
+                continue;
+            }
+
             var agentType = GetAgentType(i, options);
-            var branchName = $"autopilot/worker{i + 1}-{timestamp}";
+            var branchName = $"autopilot/worker{workerNumber}-{timestamp}";
             var worker = _agentService.CreateWorker(
-                i + 1,
+                workerNumber,
                 options.Todo,
                 agentType,
                 autopilot: true,
@@ -176,6 +187,7 @@ public class RoundOrchestrator
         var timedOut = false;
 
         _ui.SetPhase("Workers running...");
+        var markedComplete = new HashSet<int>();
         while (!token.IsCancellationRequested)
         {
             var remaining = endTime - DateTime.Now;
@@ -184,6 +196,17 @@ public class RoundOrchestrator
                 _ui.AddStatus("[yellow]Time limit reached, stopping workers[/]");
                 timedOut = true;
                 break;
+            }
+
+            // Check for newly completed workers
+            foreach (var worker in workers)
+            {
+                if (!worker.IsRunning && worker.ExitCode == 0 && !markedComplete.Contains(worker.AgentNumber))
+                {
+                    markedComplete.Add(worker.AgentNumber);
+                    _session!.MarkWorkerCompleted(worker.AgentNumber);
+                    _ui.AddStatus($"[#98c379]Worker {worker.AgentNumber} completed successfully[/]");
+                }
             }
 
             var runningCount = workers.Count(w => w.IsRunning);
