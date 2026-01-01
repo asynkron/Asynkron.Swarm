@@ -25,7 +25,8 @@ public class AgentService(AgentRegistry registry, SwarmSession session)
         string todoFile,
         AgentType agentType,
         bool autopilot = false,
-        string? branchName = null)
+        string? branchName = null,
+        int restartCount = 0)
     {
         var cli = CreateCli(agentType);
         var worker = new WorkerAgent(
@@ -34,6 +35,7 @@ public class AgentService(AgentRegistry registry, SwarmSession session)
             todoFile,
             cli,
             session.GetWorkerLogPath(agentNumber),
+            restartCount: restartCount,
             autopilot: autopilot,
             branchName: branchName);
 
@@ -46,7 +48,8 @@ public class AgentService(AgentRegistry registry, SwarmSession session)
         List<string> workerLogPaths,
         string repoPath,
         AgentType agentType,
-        bool autopilot = false)
+        bool autopilot = false,
+        int restartCount = 0)
     {
         var cli = CreateCli(agentType);
         var supervisor = new SupervisorAgent(
@@ -55,6 +58,7 @@ public class AgentService(AgentRegistry registry, SwarmSession session)
             repoPath,
             cli,
             session.GetSupervisorLogPath(),
+            restartCount: restartCount,
             autopilot: autopilot);
 
         registry.Register(supervisor);

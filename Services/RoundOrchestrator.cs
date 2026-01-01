@@ -37,11 +37,12 @@ public class RoundOrchestrator
     public async Task RunAsync(SwarmOptions options, string? resumeSessionId = null)
     {
         var absoluteRepoPath = Path.GetFullPath(options.Repo);
+        var isResume = resumeSessionId != null;
 
         // Create or resume session
-        if (resumeSessionId != null)
+        if (isResume)
         {
-            _session = SwarmSession.Load(resumeSessionId);
+            _session = SwarmSession.Load(resumeSessionId!);
             if (_session == null)
             {
                 throw new InvalidOperationException($"Session not found: {resumeSessionId}");
@@ -84,14 +85,15 @@ public class RoundOrchestrator
                         break;
                     }
 
-                    await RunArenaRoundAsync(options, absoluteRepoPath, round, cts.Token);
+                    await RunArenaRoundAsync(options, absoluteRepoPath, round, isResume, cts.Token);
+                    isResume = false; // Only first round is a resume
                 }
 
                 _ui.AddStatus("[bold green]Arena complete.[/]");
             }
             else
             {
-                await RunDefaultAsync(options, absoluteRepoPath, cts.Token);
+                await RunDefaultAsync(options, absoluteRepoPath, isResume, cts.Token);
                 _ui.AddStatus("[bold green]All workers finished.[/]");
             }
             await Task.Delay(2000, cts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -104,27 +106,31 @@ public class RoundOrchestrator
         }
     }
 
-    private async Task RunDefaultAsync(SwarmOptions options, string repoPath, CancellationToken token)
+    private async Task RunDefaultAsync(SwarmOptions options, string repoPath, bool isResume, CancellationToken token)
     {
         _agentService!.RemoveAllAgents();
 
         _ui!.SetRound(1, 1);
-        _ui.SetPhase("Creating worktrees...");
+        _ui.SetPhase(isResume ? "Resuming session..." : "Creating worktrees...");
 
         // Get worktree paths from session
         var worktreePaths = Enumerable.Range(1, options.TotalWorkers)
             .Select(i => _session!.GetWorktreePath(i))
             .ToList();
 
-        // Create worktrees
-        await WorktreeService.CreateWorktreesAsync(repoPath, worktreePaths);
+        // Create worktrees (skip if resuming - they already exist)
+        if (!isResume)
+        {
+            await WorktreeService.CreateWorktreesAsync(repoPath, worktreePaths);
+        }
 
         // Generate timestamp for unique branch names
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
 
         // Start worker agents with autopilot enabled
-        _ui.SetPhase("Starting workers...");
+        _ui.SetPhase(isResume ? "Resuming workers..." : "Starting workers...");
         var workers = new List<WorkerAgent>();
+        var restartCount = isResume ? 1 : 0;
         for (var i = 0; i < worktreePaths.Count; i++)
         {
             var agentType = GetAgentType(i, options);
@@ -134,21 +140,24 @@ public class RoundOrchestrator
                 options.Todo,
                 agentType,
                 autopilot: true,
-                branchName: branchName);
+                branchName: branchName,
+                restartCount: restartCount);
             worker.Start();
             workers.Add(worker);
-            _ui.AddStatus($"Started {worker.Name} ({agentType}) -> branch: {branchName}");
+            var statusMsg = isResume ? $"Resumed {worker.Name} ({agentType})" : $"Started {worker.Name} ({agentType}) -> branch: {branchName}";
+            _ui.AddStatus(statusMsg);
         }
 
         // Start supervisor agent
-        _ui.SetPhase("Starting supervisor...");
+        _ui.SetPhase(isResume ? "Resuming supervisor..." : "Starting supervisor...");
         var workerLogPaths = workers.Select(w => w.LogPath).ToList();
         var supervisor = _agentService.CreateSupervisor(
             worktreePaths,
             workerLogPaths,
             repoPath,
             options.SupervisorType,
-            autopilot: true);
+            autopilot: true,
+            restartCount: restartCount);
         supervisor.Start();
         _ui.AddStatus($"Started Supervisor ({options.SupervisorType}) - monitoring mode");
 
@@ -217,44 +226,51 @@ public class RoundOrchestrator
         }
     }
 
-    private async Task RunArenaRoundAsync(SwarmOptions options, string repoPath, int round, CancellationToken token)
+    private async Task RunArenaRoundAsync(SwarmOptions options, string repoPath, int round, bool isResume, CancellationToken token)
     {
         _agentService!.RemoveAllAgents();
 
         _ui!.SetRound(round, options.MaxRounds);
-        _ui.SetPhase("Creating worktrees...");
+        _ui.SetPhase(isResume ? "Resuming session..." : "Creating worktrees...");
 
         // Get worktree paths from session
         var worktreePaths = Enumerable.Range(1, options.TotalWorkers)
             .Select(i => _session!.GetWorktreePath(i))
             .ToList();
 
-        // Create worktrees
-        await WorktreeService.CreateWorktreesAsync(repoPath, worktreePaths);
+        // Create worktrees (skip if resuming - they already exist)
+        if (!isResume)
+        {
+            await WorktreeService.CreateWorktreesAsync(repoPath, worktreePaths);
+        }
 
         // Start worker agents
-        _ui.SetPhase("Starting workers...");
+        _ui.SetPhase(isResume ? "Resuming workers..." : "Starting workers...");
         var workers = new List<WorkerAgent>();
+        var restartCount = isResume ? 1 : 0;
         for (var i = 0; i < worktreePaths.Count; i++)
         {
             var agentType = GetAgentType(i, options);
             var worker = _agentService.CreateWorker(
                 i + 1,
                 options.Todo,
-                agentType);
+                agentType,
+                restartCount: restartCount);
             worker.Start();
             workers.Add(worker);
-            _ui.AddStatus($"Started {worker.Name} ({agentType})");
+            var statusMsg = isResume ? $"Resumed {worker.Name} ({agentType})" : $"Started {worker.Name} ({agentType})";
+            _ui.AddStatus(statusMsg);
         }
 
         // Start supervisor agent
-        _ui.SetPhase("Starting supervisor...");
+        _ui.SetPhase(isResume ? "Resuming supervisor..." : "Starting supervisor...");
         var workerLogPaths = workers.Select(w => w.LogPath).ToList();
         var supervisor = _agentService.CreateSupervisor(
             worktreePaths,
             workerLogPaths,
             repoPath,
-            options.SupervisorType);
+            options.SupervisorType,
+            restartCount: restartCount);
         supervisor.Start();
         _ui.AddStatus($"Started Supervisor ({options.SupervisorType})");
 
