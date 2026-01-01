@@ -44,7 +44,11 @@ public class AgentDisplayState
             var count = Math.Min(lines, _displayLines.Count - offset - startIndex);
 
             // Use GetRange for O(count) instead of Skip which is O(n)
-            var text = _displayLines.GetRange(startIndex, count);
+            var text = _displayLines
+                .GetRange(startIndex, count)
+                .Select(line => line.TrimEnd())
+                .ToList();
+            
             var content = string.Join(Environment.NewLine, text);
 
             // Return raw content - table reformatting was causing display issues

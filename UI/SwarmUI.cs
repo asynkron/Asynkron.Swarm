@@ -567,7 +567,22 @@ public sealed class SwarmUI : IDisposable
                     // Calculate available lines based on terminal height
                     // Layout: Header (3) + Main area, Log panel has 2 lines for borders
                     var availableLines = Math.Max(5, _lastConsoleHeight - 3 - 2);
-                    var content = displayState?.GetDisplay(availableLines, logScrollOffset) ?? "[Waiting for output...]";
+                    var content = "" + displayState?.GetDisplay(availableLines, logScrollOffset) + """
+
+
+
+
+
+
+
+
+
+
+
+
+                        End of log.
+                        """;
+                    
                     _cachedLog = BuildLogPanelWithContent(selectedItemId, selectedAgent, displayState, content, logScrollOffset, focus);
                 }
             }
